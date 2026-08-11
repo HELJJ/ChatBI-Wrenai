@@ -1,0 +1,178 @@
+name: security_os
+properties:
+  description: 系统操作系统管理表，记录操作系统资产信息
+table_reference:
+  catalog: ''
+  schema: SAFETY_RISK_NEW
+  table: sec_security_os
+columns:
+- name: F_ID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: true
+  is_primary_key: true
+  properties:
+    description: 主键ID
+- name: F_OSNAME
+  type: VARCHAR(200)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 操作系统名称和版本
+- name: F_OSCODE
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 操作系统编码
+- name: F_RESOURCENAME
+  type: VARCHAR(200)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 资源名称（如服务器名称）
+- name: F_RESPONSIBLEPERSON
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 操作系统负责人
+- name: F_BUSINESSENTRY
+  type: VARCHAR(500)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 业务入口地址
+- name: F_EXTERNALSERVICE
+  type: VARCHAR(500)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 对外服务地址
+- name: F_COMPUTINGDEVICE
+  type: VARCHAR(500)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 计算设备地址
+- name: F_ISMAINASSET
+  type: INT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 是否为主资产：0-否，1-是
+- name: F_VERSION
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 操作系统内核版本
+- name: F_ENABLEDMARK
+  type: INT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 有效标志：0-无效，1-有效
+- name: F_DESCRIPTION
+  type: TEXT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 操作系统描述说明
+- name: F_SORTCODE
+  type: BIGINT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 排序码
+- name: F_CREATORTIME
+  type: TIMESTAMP
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 创建时间
+- name: F_CREATORUSERID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 创建用户ID
+- name: F_LASTMODIFYTIME
+  type: TIMESTAMP
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 最后修改时间
+- name: F_LASTMODIFYUSERID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 最后修改用户ID
+- name: F_DELETEMARK
+  type: INT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 删除标志：0-未删除，1-已删除
+- name: F_DELETETIME
+  type: TIMESTAMP
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 删除时间
+- name: F_DELETEUSERID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 删除用户ID
+- name: F_INSTALL_DATE
+  type: DATE
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 原数据库未提供字段说明。
+- name: F_SUP
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 原数据库未提供字段说明。
+- name: F_RESOURCE_ID
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 原数据库未提供字段说明。
+- name: F_SYSTEMID
+  type: VARCHAR(64)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 原数据库未提供字段说明。
+primary_key: F_ID
+cached: false

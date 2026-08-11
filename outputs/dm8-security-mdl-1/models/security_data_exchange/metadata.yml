@@ -1,0 +1,157 @@
+name: security_data_exchange
+properties:
+  description: 数据交换管理表，记录系统间数据交互配置信息
+table_reference:
+  catalog: ''
+  schema: SAFETY_RISK_NEW
+  table: sec_security_dataexchange
+columns:
+- name: F_ID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: true
+  is_primary_key: true
+  properties:
+    description: 主键ID
+- name: F_EXCHANGENAME
+  type: VARCHAR(200)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 交互名称
+- name: F_EXCHANGETYPE
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 交互类型
+- name: F_DATASENSITLEVEL
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 数据敏感级别
+- name: F_BUSINESSSYSTEM
+  type: VARCHAR(200)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 所属业务系统
+- name: F_DATAPROVIDER
+  type: VARCHAR(200)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 数据提供方
+- name: F_DATACONSUMER
+  type: VARCHAR(200)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 数据接口方/消费方
+- name: F_ENABLEDMARK
+  type: INT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 有效标志：0-无效，1-有效
+- name: F_DESCRIPTION
+  type: TEXT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 描述说明
+- name: F_SORTCODE
+  type: BIGINT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 排序码，用于排序显示
+- name: F_CREATORTIME
+  type: TIMESTAMP
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 创建时间
+- name: F_CREATORUSERID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 创建用户ID
+- name: F_LASTMODIFYTIME
+  type: TIMESTAMP
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 最后修改时间
+- name: F_LASTMODIFYUSERID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 最后修改用户ID
+- name: F_DELETEMARK
+  type: INT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 删除标志：0-未删除，1-已删除
+- name: F_DELETETIME
+  type: TIMESTAMP
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 删除时间
+- name: F_DELETEUSERID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 删除用户ID
+- name: F_BUSINESSSYSTEM_ID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 所属系统ID，关联 sec_system_info.F_ID
+- name: F_INTERACTION_URL
+  type: VARCHAR(500)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 交互地址
+- name: F_EXCHANGECATEGORY
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 交互类别
+- name: F_EXCHANGETIME
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 交互时间
+primary_key: F_ID
+cached: false

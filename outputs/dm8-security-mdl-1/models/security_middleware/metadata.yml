@@ -1,0 +1,171 @@
+name: security_middleware
+properties:
+  description: 安全中间件管理表，记录系统安装的中间件信息
+table_reference:
+  catalog: ''
+  schema: SAFETY_RISK_NEW
+  table: sec_security_middleware
+columns:
+- name: F_ID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: true
+  is_primary_key: true
+  properties:
+    description: 主键ID
+- name: F_MIDDLEWARENAME
+  type: VARCHAR(200)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 中间件名称
+- name: F_MIDDLEWARECODE
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 中间件编码
+- name: F_INSTALLLOCATION
+  type: VARCHAR(500)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 安装位置/路径
+- name: F_RESPONSIBLEPERSON
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 中间件负责人
+- name: F_VERSIONNO
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 中间件版本号
+- name: F_DEPENDENCYCOMPONENT
+  type: VARCHAR(500)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 依赖组件列表
+- name: F_PORTNUMBER
+  type: INT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 服务端口号
+- name: F_HASOWNER
+  type: INT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 是否有负责人：0-无主，1-有主
+- name: F_ENABLEDMARK
+  type: INT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 有效标志：0-无效，1-有效
+- name: F_DESCRIPTION
+  type: TEXT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 中间件描述说明
+- name: F_SORTCODE
+  type: BIGINT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 排序码
+- name: F_CREATORTIME
+  type: TIMESTAMP
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 创建时间
+- name: F_CREATORUSERID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 创建用户ID
+- name: F_LASTMODIFYTIME
+  type: TIMESTAMP
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 最后修改时间
+- name: F_LASTMODIFYUSERID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 最后修改用户ID
+- name: F_DELETEMARK
+  type: INT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 删除标志：0-未删除，1-已删除
+- name: F_DELETETIME
+  type: TIMESTAMP
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 删除时间
+- name: F_DELETEUSERID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 删除用户ID
+- name: F_SYSTEM_ID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 所属系统ID，关联 sec_system_info.F_ID
+- name: F_SYSTEM_NAME
+  type: VARCHAR(200)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 所属系统，冗余存储 sec_system_info.F_NAME 便于展示
+- name: F_RESOURCE_NAME
+  type: VARCHAR(200)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 所属资源，冗余存储 sec_security_resource.F_RESOURCENAME 便于展示
+- name: F_RESOURCE_ID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 所属资源ID，关联 sec_security_resource.F_ID
+primary_key: F_ID
+cached: false

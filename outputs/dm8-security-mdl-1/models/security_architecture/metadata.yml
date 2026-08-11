@@ -1,0 +1,171 @@
+name: security_architecture
+properties:
+  description: 安全架构管理表，记录系统安全架构设计信息
+table_reference:
+  catalog: ''
+  schema: SAFETY_RISK_NEW
+  table: sec_security_architecture
+columns:
+- name: F_ID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: true
+  is_primary_key: true
+  properties:
+    description: 主键ID
+- name: F_ARCHITECTURENAME
+  type: VARCHAR(200)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 架构名称
+- name: F_ARCHITECTURETYPE
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 架构类型：微服务、B/S、分布式等
+- name: F_RESPONSIBLEPERSON
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 架构负责人
+- name: F_VERSIONNO
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 架构版本号
+- name: F_CORECOMPONENT
+  type: VARCHAR(500)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 核心组件列表
+- name: F_NETWORKTYPE
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 网络类型：内网、DMZ区等
+- name: F_NETWORKDEVICE
+  type: VARCHAR(500)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 网络设备列表
+- name: F_ENABLEDMARK
+  type: INT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 有效标志：0-无效，1-有效
+- name: F_DESCRIPTION
+  type: TEXT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 架构描述说明
+- name: F_SORTCODE
+  type: BIGINT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 排序码
+- name: F_CREATORTIME
+  type: TIMESTAMP
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 创建时间
+- name: F_CREATORUSERID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 创建用户ID
+- name: F_LASTMODIFYTIME
+  type: TIMESTAMP
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 最后修改时间
+- name: F_LASTMODIFYUSERID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 最后修改用户ID
+- name: F_DELETEMARK
+  type: INT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 删除标志：0-未删除，1-已删除
+- name: F_DELETETIME
+  type: TIMESTAMP
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 删除时间
+- name: F_DELETEUSERID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 删除用户ID
+- name: F_IMAGEPATH
+  type: VARCHAR(255)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 图片路径
+- name: F_IMAGENAME
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 图片名称
+- name: F_IMAGEURL
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 原数据库未提供字段说明。
+- name: F_SYSTEM_ID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 所属系统ID，关联 sec_system_info.F_ID
+- name: F_SYSTEM_NAME
+  type: VARCHAR(200)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 所属系统，冗余存储 sec_system_info.F_NAME 便于展示
+primary_key: F_ID
+cached: false

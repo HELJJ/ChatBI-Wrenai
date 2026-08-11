@@ -1,0 +1,61 @@
+relationships:
+- name: architecture_system
+  models:
+  - security_architecture
+  - security_system
+  join_type: MANY_TO_ONE
+  condition: security_architecture.F_SYSTEM_ID = security_system.F_ID
+- name: database_system
+  models:
+  - security_database
+  - security_system
+  join_type: MANY_TO_ONE
+  condition: security_database.F_SYSTEMID = security_system.F_ID
+- name: data_exchange_system
+  models:
+  - security_data_exchange
+  - security_system
+  join_type: MANY_TO_ONE
+  condition: security_data_exchange.F_BUSINESSSYSTEM_ID = security_system.F_ID
+- name: middleware_system
+  models:
+  - security_middleware
+  - security_system
+  join_type: MANY_TO_ONE
+  condition: security_middleware.F_SYSTEM_ID = security_system.F_ID
+- name: middleware_resource
+  models:
+  - security_middleware
+  - security_resource
+  join_type: MANY_TO_ONE
+  condition: security_middleware.F_RESOURCE_ID = security_resource.F_ID
+- name: os_system
+  models:
+  - security_os
+  - security_system
+  join_type: MANY_TO_ONE
+  condition: security_os.F_SYSTEMID = security_system.F_ID
+- name: os_resource
+  models:
+  - security_os
+  - security_resource
+  join_type: MANY_TO_ONE
+  condition: security_os.F_RESOURCE_ID = security_resource.F_ID
+- name: plugin_system
+  models:
+  - security_plugin
+  - security_system
+  join_type: MANY_TO_ONE
+  condition: security_plugin.F_SYSTEM_ID = security_system.F_ID
+- name: port_system
+  models:
+  - security_port
+  - security_system
+  join_type: MANY_TO_ONE
+  condition: security_port.F_BUSINESSSYSTEM_ID = security_system.F_ID
+- name: resource_system
+  models:
+  - security_resource
+  - security_system
+  join_type: MANY_TO_ONE
+  condition: security_resource.F_SYSTEMID = security_system.F_ID

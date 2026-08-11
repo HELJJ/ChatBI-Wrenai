@@ -1,0 +1,6 @@
+schema_version: 5
+name: dm8_security
+catalog: wren
+schema: SAFETY_RISK_NEW
+data_source: dm8
+profile: dm8-prod

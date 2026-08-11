@@ -1,0 +1,150 @@
+name: security_port
+properties:
+  description: 安全端口管理表，记录系统开放的端口信息
+table_reference:
+  catalog: ''
+  schema: SAFETY_RISK_NEW
+  table: sec_security_port
+columns:
+- name: F_ID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: true
+  is_primary_key: true
+  properties:
+    description: 主键ID
+- name: F_SERVICENAME
+  type: VARCHAR(200)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 服务名称
+- name: F_PORTNUMBER
+  type: INT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 端口号
+- name: F_EXTERNALSERVICE
+  type: VARCHAR(500)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 对外服务地址和协议
+- name: F_RESPONSIBLEPERSON
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 端口负责人
+- name: F_SERVICETYPE
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 服务类型：Web服务、数据库、消息队列等
+- name: F_CONTAINERID
+  type: VARCHAR(100)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 容器ID（如果部署在容器中）
+- name: F_DEPENDENTSERVICE
+  type: VARCHAR(500)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 依赖的上游服务
+- name: F_ENABLEDMARK
+  type: INT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 有效标志：0-无效，1-有效
+- name: F_DESCRIPTION
+  type: TEXT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 端口描述说明
+- name: F_SORTCODE
+  type: BIGINT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 排序码
+- name: F_CREATORTIME
+  type: TIMESTAMP
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 创建时间
+- name: F_CREATORUSERID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 创建用户ID
+- name: F_LASTMODIFYTIME
+  type: TIMESTAMP
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 最后修改时间
+- name: F_LASTMODIFYUSERID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 最后修改用户ID
+- name: F_DELETEMARK
+  type: INT
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 删除标志：0-未删除，1-已删除
+- name: F_DELETETIME
+  type: TIMESTAMP
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 删除时间
+- name: F_DELETEUSERID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 删除用户ID
+- name: F_BUSINESSSYSTEM
+  type: VARCHAR(200)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 所属业务系统
+- name: F_BUSINESSSYSTEM_ID
+  type: VARCHAR(50)
+  is_calculated: false
+  not_null: false
+  is_primary_key: false
+  properties:
+    description: 所属系统ID
+primary_key: F_ID
+cached: false
