@@ -227,16 +227,21 @@ The service provides `audited_wren_query`, replacing the ordinary
 LLM-facing `wren_query` tool for this agent. For each call it:
 
 1. reserves the next request-local sequence number;
-2. records the start time and model-provided semantic SQL;
+2. inserts an attempt with `status=running`, the start time, the
+   model-provided semantic SQL, and the row limit;
 3. validates the limit and read-only SQL policy;
 4. asks Wren to produce target-dialect SQL;
-5. executes the planned SQL once with an `N+1` result probe;
-6. normalizes and bounds the result;
-7. immediately persists either success data or a structured error;
-8. returns the result or error envelope to the model.
+5. persists `executed_sql` on the still-running attempt before sending that
+   SQL to the business database;
+6. executes the planned SQL once with an `N+1` result probe;
+7. normalizes and bounds the result;
+8. atomically changes the attempt to `success` with its result or `failed`
+   with its structured error;
+9. returns the result or error envelope to the model.
 
 Every tool call is an attempt, including planning failures. A later corrected
-query creates a new attempt with the next sequence value.
+query creates a new attempt with the next sequence value. If the initial
+`running` insert cannot be committed, the tool must not plan or execute SQL.
 
 ### 7.3 Capturing the executed SQL without duplicate execution
 
@@ -286,25 +291,35 @@ One row represents one `audited_wren_query` call.
 | `sequence` | INTEGER | Required, starts at 1, unique within request |
 | `semantic_sql` | TEXT | Required, SQL supplied by the model |
 | `executed_sql` | TEXT | Nullable when planning did not finish |
-| `status` | TEXT | `success` or `failed` |
+| `status` | TEXT | `running`, `success`, or `failed` |
 | `row_limit` | INTEGER | Maximum number of rows retained |
 | `returned_row_count` | INTEGER | Number of result rows actually persisted |
 | `result_truncated` | BOOLEAN | Whether at least one additional row existed |
 | `result` | JSONB | Nullable; success columns and retained rows |
 | `error` | JSONB | Nullable structured attempt error |
 | `started_at` | TIMESTAMPTZ | Required |
-| `completed_at` | TIMESTAMPTZ | Required |
-| `duration_ms` | INTEGER | Non-negative total plan and query duration |
+| `completed_at` | TIMESTAMPTZ | Nullable while running; required when terminal |
+| `duration_ms` | INTEGER | Nullable while running; otherwise non-negative total plan and query duration |
 
 Constraints enforce:
 
 ```text
 UNIQUE(request_id, sequence)
+status = running -> result IS NULL AND error IS NULL
 status = success -> result IS NOT NULL AND error IS NULL
 status = failed  -> result IS NULL AND error IS NOT NULL
+status = running -> completed_at IS NULL AND duration_ms IS NULL
+status IN (success, failed) -> completed_at IS NOT NULL AND duration_ms IS NOT NULL
 returned_row_count >= 0
 row_limit >= 1
 ```
+
+A newly inserted running attempt has `executed_sql=null`,
+`returned_row_count=0`, `result_truncated=false`, `result=null`, and
+`error=null`. Planning success updates `executed_sql` before database
+execution without changing the status. All terminal updates use
+`WHERE status='running'` so a recovery task and a late worker cannot both
+finalize the same attempt.
 
 Attempts are read in ascending `sequence` order. Timestamp order is not used
 to reconstruct the retry chain.
@@ -410,6 +425,11 @@ This representation is internal only. It is not the response of
 IDs remain available in the underlying audit records even though they are not
 repeated in this business-facing audit view.
 
+While a request is live, this view may contain a `running` attempt with no
+result or error. After interruption recovery, that entry becomes a failed
+attempt with `error.code=SQL_ATTEMPT_INTERRUPTED`; completed audit views do not
+leave stale attempts in `running` indefinitely.
+
 ## 9. Result Limits and Completeness
 
 The default `row_limit` is 100 and the hard maximum is 1,000. The caller
@@ -442,23 +462,54 @@ Audit evidence is written incrementally rather than at the end of the LLM
 run:
 
 1. insert a `chat_audit_requests` row with `status=running`;
-2. execute an SQL attempt;
-3. commit that attempt's success or error in a short transaction;
-4. repeat steps 2 and 3 for corrections;
-5. persist the final compact LangGraph conversation state;
-6. update the request row with `answer`, `status=succeeded`, and
+2. insert a `chat_sql_attempts` row with `status=running` before planning;
+3. plan the SQL and persist `executed_sql` before business-database execution;
+4. execute the SQL;
+5. atomically update the attempt to `success` with its result or `failed` with
+   its structured error;
+6. repeat steps 2 through 5 for corrections;
+7. persist the final compact LangGraph conversation state;
+8. update the request row with `answer`, `status=succeeded`, and
    `completed_at`;
-7. return the public success response.
+9. return the public success response.
 
 No database transaction remains open during an LLM or business-database call.
-Completed SQL attempts survive a process crash later in the request.
+The initial attempt insert closes the audit gap where SQL could reach the
+database and then disappear from the log after a process crash. Persisting
+`executed_sql` before database execution further distinguishes an interrupted
+planning attempt (`executed_sql=null`) from an attempt that may already have
+reached the database (`executed_sql` is populated).
 
 The service returns success only after both conversation state and final audit
 status have been persisted. If required audit persistence fails, the API must
 not silently return a successful answer.
 
-A recovery job marks stale `running` requests as `failed` with
-`REQUEST_INTERRUPTED`. It does not delete their completed SQL attempts.
+A recovery job considers an attempt interrupted only when both its session
+lease has expired and its `started_at` is older than the configured
+interruption threshold (default 150 seconds). It first atomically changes each
+qualifying still-running SQL attempt to `failed` with:
+
+```json
+{
+  "code": "SQL_ATTEMPT_INTERRUPTED",
+  "phase": "SQL_EXECUTION",
+  "message": "The service stopped before the SQL attempt outcome was recorded.",
+  "metadata": {"outcome": "unknown"}
+}
+```
+
+It sets `completed_at` to the recovery time, calculates `duration_ms`, retains
+the existing `semantic_sql` and `executed_sql`, and leaves result fields empty.
+The recovery phase is `SQL_PLANNING` when `executed_sql` is null and
+`SQL_EXECUTION` when it is populated; the example above shows the latter.
+The `outcome=unknown` metadata is important: a read-only database query may
+have completed even though the service crashed before observing or persisting
+its result.
+
+After recovering attempts, the job changes the stale main request to `failed`
+with `REQUEST_INTERRUPTED`. It does not alter already-terminal attempts. Both
+updates are conditional on the row still being `running`, making the recovery
+job safe to retry.
 
 ## 11. Same-Session Concurrency
 
@@ -598,21 +649,28 @@ Automated tests must demonstrate:
 7. An execution failure stores both semantic and executed SQL.
 8. A failed query followed by a corrected query produces sequences 1 and 2.
 9. Multiple successful SQL calls retain their real execution order.
-10. An `N+1` result sets `returned_row_count=N` and
+10. Every SQL tool invocation inserts a `running` attempt before Wren planning
+    or connector execution begins.
+11. Planned target SQL is committed to the running attempt before the
+    connector receives it.
+12. An `N+1` result sets `returned_row_count=N` and
     `result_truncated=true`.
-11. Database aggregation uses all qualifying rows despite the result limit.
-12. Audit persistence failure prevents a public success response.
-13. A process interruption preserves previously committed SQL attempts.
-14. An expired session lease can be acquired by a later request.
-15. DML, DDL, transaction, and multi-statement SQL never reach the connector.
-16. A fourth SQL attempt is rejected after three attempts.
-17. Compacted context still resolves references to older filters and periods.
-18. A success response contains exactly `session_id` and `answer`.
-19. Dates, decimals, non-finite floats, and byte values follow normalization
+13. Database aggregation uses all qualifying rows despite the result limit.
+14. Audit persistence failure prevents a public success response.
+15. A process interruption leaves a running attempt that recovery converts to
+    `failed` with `SQL_ATTEMPT_INTERRUPTED` and an unknown outcome.
+16. Recovery distinguishes an interrupted planning attempt from an interrupted
+    database-execution attempt using the presence of `executed_sql`.
+17. An expired session lease can be acquired by a later request.
+18. DML, DDL, transaction, and multi-statement SQL never reach the connector.
+19. A fourth SQL attempt is rejected after three attempts.
+20. Compacted context still resolves references to older filters and periods.
+21. A success response contains exactly `session_id` and `answer`.
+22. Dates, decimals, non-finite floats, and byte values follow normalization
     rules.
-20. Error metadata and application logs do not leak credentials.
-21. A clarification answer succeeds with zero SQL attempts.
-22. A large single row produces a structured serialization or size error and
+23. Error metadata and application logs do not leak credentials.
+24. A clarification answer succeeds with zero SQL attempts.
+25. A large single row produces a structured serialization or size error and
     can be followed by a corrected query.
 
 Unit tests use deterministic fake models and fake Wren tools. PostgreSQL
@@ -637,7 +695,8 @@ repositories, checkpoint initialization, and session lease component.
 ### Phase 3: Audited agent
 
 Build the LangGraph agent, audited SQL tool, incremental attempt persistence,
-retry limits, result normalization, and compact conversation state.
+pre-execution `running` records, interrupted-attempt recovery, retry limits,
+result normalization, and compact conversation state.
 
 ### Phase 4: HTTP behavior and failure mapping
 
