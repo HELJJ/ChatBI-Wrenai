@@ -1,0 +1,53 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wren-chat-api"
+version = "0.1.0"
+description = "Session-isolated business-data chat API powered by Wren"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.10",
+  "pydantic-settings>=2.7",
+  "langchain>=1.2",
+  "langchain-core>=1.2.22",
+  "langchain-openai>=1.1",
+  "langgraph>=1.2.8",
+  "langgraph-checkpoint>=3.0.0",
+  "langgraph-checkpoint-postgres>=3.1.0",
+  "psycopg[binary,pool]>=3.2.7",
+  "prometheus-client>=0.21",
+  "pyarrow>=14",
+  "sqlglot>=29",
+  "wrenai>=0.13.2",
+  "wren-langchain>=0.2.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.25",
+  "httpx>=0.28",
+  "testcontainers[postgres]>=4",
+  "ruff>=0.9",
+  "build>=1.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wren_chat_api"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "PLC"]
+ignore = ["E501"]

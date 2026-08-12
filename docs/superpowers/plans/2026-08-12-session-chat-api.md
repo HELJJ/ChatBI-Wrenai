@@ -343,11 +343,16 @@ Expected: FAIL because the service modules do not exist.
 Use `ConfigDict(extra="forbid")`, `StringConstraints`, and `SecretStr`. Required environment values are:
 
 ```text
-WREN_CHAT_DATABASE_URL
+WREN_CHAT_STATE_DATABASE_URL
 WREN_CHAT_API_KEY
 WREN_CHAT_PROJECT_PATH
 WREN_CHAT_MODEL
 ```
+
+`WREN_CHAT_STATE_DATABASE_URL` is the PostgreSQL DSN for audit records,
+LangGraph checkpoints, and session leases. It is separate from the Wren project
+profile used to connect to the read-only business database. Task 2 validates
+the DSN with psycopg but does not open a database connection.
 
 Bounded defaults:
 
