@@ -7,7 +7,8 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from wren.engine import WrenEngine
+from wren.config import WrenConfig
+from wren.engine import PlannedQuery, WrenEngine
 
 from wren_langchain._memory_api import _MemoryAPI
 from wren_langchain._prompt import build_system_prompt
@@ -35,11 +36,13 @@ class WrenToolkit:
         mdl_source: ProjectMDLSource,
         connection_provider: ProfileConnectionProvider,
         memory_provider: LocalLanceDBMemoryProvider | NoopMemoryProvider,
+        config: WrenConfig | None = None,
     ):
         self._project_path = project_path
         self._mdl_source = mdl_source
         self._connection = connection_provider
         self._memory = memory_provider
+        self._config = config or WrenConfig()
         # Connector is cached at the toolkit level to avoid reconnecting on
         # every query. The engine itself is rebuilt per call so manifest
         # changes are picked up read-through.
@@ -63,6 +66,19 @@ class WrenToolkit:
         engine = self._build_engine()
         try:
             result = engine.query(sql, limit=limit)
+        finally:
+            self._connector_cache = engine._connector
+        return result
+
+    def plan_query(self, sql: str) -> PlannedQuery:
+        """Plan SQL through MDL without executing it against the data source."""
+        return self._build_engine().plan_query(sql)
+
+    def execute_planned(self, plan: PlannedQuery, limit: int | None = None) -> pa.Table:
+        """Execute an existing plan while retaining connector reuse."""
+        engine = self._build_engine()
+        try:
+            result = engine.execute_planned(plan, limit=limit)
         finally:
             self._connector_cache = engine._connector
         return result
@@ -147,6 +163,7 @@ class WrenToolkit:
             manifest_str=manifest_str,
             data_source=self._connection.datasource(),
             connection_info=self._connection.connection_info(),
+            config=self._config,
         )
         if self._connector_cache is not None:
             engine._connector = self._connector_cache
@@ -158,6 +175,7 @@ class WrenToolkit:
         path: str | Path,
         *,
         profile: str | None = None,
+        config: WrenConfig | None = None,
     ) -> WrenToolkit:
         """Build a toolkit from a CLI-prepared Wren project directory.
 
@@ -194,6 +212,7 @@ class WrenToolkit:
             mdl_source=mdl_source,
             connection_provider=connection,
             memory_provider=memory_provider,
+            config=config,
         )
 
     @staticmethod

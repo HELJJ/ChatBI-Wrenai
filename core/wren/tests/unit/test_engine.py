@@ -7,14 +7,17 @@ transpile path without connecting to any data source.
 from __future__ import annotations
 
 import base64
+from unittest.mock import MagicMock
 
 import orjson
+import pyarrow as pa
 import pytest
 
 from wren import WrenEngine
 from wren.config import WrenConfig
+from wren.engine import PlannedQuery
 from wren.model.data_source import DataSource
-from wren.model.error import ErrorCode, WrenError
+from wren.model.error import DIALECT_SQL, ErrorCode, ErrorPhase, WrenError
 
 pytestmark = pytest.mark.unit
 
@@ -95,6 +98,94 @@ def test_dry_plan_calculated_field(duckdb_engine: WrenEngine) -> None:
 def test_dry_plan_invalid_sql_raises(duckdb_engine: WrenEngine) -> None:
     with pytest.raises(WrenError):
         duckdb_engine.dry_plan("SELECT * FROM not_a_model_in_manifest")
+
+
+# ------------------------------------------------------------------
+# Two-phase query planning and execution
+# ------------------------------------------------------------------
+
+
+def test_plan_query_returns_planned_target_sql(duckdb_engine: WrenEngine) -> None:
+    plan = duckdb_engine.plan_query('SELECT o_orderkey FROM "orders" LIMIT 1')
+
+    assert isinstance(plan, PlannedQuery)
+    assert isinstance(plan.dialect_sql, str)
+    assert plan.dialect_sql
+
+
+def test_query_plans_once_then_executes_exact_plan(
+    duckdb_engine: WrenEngine, monkeypatch
+) -> None:
+    plan = PlannedQuery(dialect_sql="SELECT 1 AS value")
+    table = pa.table({"value": [1]})
+    connector = MagicMock()
+    connector.query.return_value = table
+    plan_query = MagicMock(return_value=plan)
+    monkeypatch.setattr(duckdb_engine, "plan_query", plan_query)
+    monkeypatch.setattr(duckdb_engine, "_get_connector", lambda: connector)
+
+    result = duckdb_engine.query("SELECT 1", limit=7)
+
+    assert result is table
+    plan_query.assert_called_once_with("SELECT 1", None)
+    connector.query.assert_called_once_with("SELECT 1 AS value", 7)
+
+
+def test_execute_planned_does_not_plan_again(
+    duckdb_engine: WrenEngine, monkeypatch
+) -> None:
+    table = pa.table({"value": [1]})
+    connector = MagicMock()
+    connector.query.return_value = table
+    monkeypatch.setattr(duckdb_engine, "_get_connector", lambda: connector)
+    monkeypatch.setattr(
+        duckdb_engine,
+        "_plan",
+        MagicMock(side_effect=AssertionError("must not re-plan")),
+    )
+
+    result = duckdb_engine.execute_planned(
+        PlannedQuery(dialect_sql="SELECT 1 AS value"), limit=2
+    )
+
+    assert result is table
+    connector.query.assert_called_once_with("SELECT 1 AS value", 2)
+
+
+def test_execute_planned_wraps_connector_failure(
+    duckdb_engine: WrenEngine, monkeypatch
+) -> None:
+    connector = MagicMock()
+    connector.query.side_effect = RuntimeError("database unavailable")
+    monkeypatch.setattr(duckdb_engine, "_get_connector", lambda: connector)
+    plan = PlannedQuery(dialect_sql="SELECT * FROM physical_orders")
+
+    with pytest.raises(WrenError) as exc_info:
+        duckdb_engine.execute_planned(plan)
+
+    error = exc_info.value
+    assert error.error_code == ErrorCode.GENERIC_USER_ERROR
+    assert error.phase == ErrorPhase.SQL_EXECUTION
+    assert error.metadata == {DIALECT_SQL: plan.dialect_sql}
+
+
+def test_execute_planned_preserves_structured_wren_error(
+    duckdb_engine: WrenEngine, monkeypatch
+) -> None:
+    expected = WrenError(
+        ErrorCode.DATABASE_TIMEOUT,
+        "query timed out",
+        phase=ErrorPhase.SQL_EXECUTION,
+        metadata={"driver": "postgres"},
+    )
+    connector = MagicMock()
+    connector.query.side_effect = expected
+    monkeypatch.setattr(duckdb_engine, "_get_connector", lambda: connector)
+
+    with pytest.raises(WrenError) as exc_info:
+        duckdb_engine.execute_planned(PlannedQuery(dialect_sql="SELECT 1"))
+
+    assert exc_info.value is expected
 
 
 # ------------------------------------------------------------------

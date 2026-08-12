@@ -1,5 +1,7 @@
 """LangChain and LangGraph integration for Wren AI Core."""
 
+from wren.engine import PlannedQuery
+
 from wren_langchain._toolkit import WrenToolkit
 from wren_langchain.exceptions import (
     MemoryNotEnabledError,
@@ -9,6 +11,7 @@ from wren_langchain.exceptions import (
 __version__ = "0.2.1"
 
 __all__ = [
+    "PlannedQuery",
     "WrenToolkit",
     "WrenToolkitInitError",
     "MemoryNotEnabledError",

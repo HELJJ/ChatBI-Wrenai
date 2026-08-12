@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import base64
 import json
+from dataclasses import dataclass
 from typing import Any
 
 import pyarrow as pa
@@ -34,6 +35,13 @@ from wren.mdl.cte_rewriter import CTERewriter, get_sqlglot_dialect
 from wren.model.data_source import DataSource
 from wren.model.error import DIALECT_SQL, ErrorCode, ErrorPhase, WrenError
 from wren.policy import resolve_model_name, validate_sql_policy
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedQuery:
+    """Target-dialect SQL produced by Wren planning and ready to execute."""
+
+    dialect_sql: str
 
 
 class WrenEngine:
@@ -84,8 +92,8 @@ class WrenEngine:
     # SQL transformation (no DB access)
     # ------------------------------------------------------------------
 
-    def dry_plan(self, sql: str, properties: dict | None = None) -> str:
-        """Plan SQL through MDL and return the expanded SQL in the target dialect.
+    def plan_query(self, sql: str, properties: dict | None = None) -> PlannedQuery:
+        """Plan SQL through MDL without executing it against the data source.
 
         Transformation flow::
 
@@ -98,7 +106,11 @@ class WrenEngine:
               → sqlglot generate (target dialect)
               → output SQL with model CTEs in target dialect
         """
-        return self._plan(sql, properties)
+        return PlannedQuery(dialect_sql=self._plan(sql, properties))
+
+    def dry_plan(self, sql: str, properties: dict | None = None) -> str:
+        """Plan SQL and return the expanded SQL in the target dialect."""
+        return self.plan_query(sql, properties).dialect_sql
 
     # ------------------------------------------------------------------
     # SQL execution
@@ -111,10 +123,13 @@ class WrenEngine:
         properties: dict | None = None,
     ) -> pa.Table:
         """Transpile and execute SQL, return results as an Arrow table."""
-        dialect_sql = self.dry_plan(sql, properties)
+        return self.execute_planned(self.plan_query(sql, properties), limit)
+
+    def execute_planned(self, plan: PlannedQuery, limit: int | None = None) -> pa.Table:
+        """Execute an existing plan without planning the SQL again."""
         connector = self._get_connector()
         try:
-            return connector.query(dialect_sql, limit)
+            return connector.query(plan.dialect_sql, limit)
         except WrenError:
             raise
         except Exception as e:
@@ -122,7 +137,7 @@ class WrenEngine:
                 ErrorCode.GENERIC_USER_ERROR,
                 str(e),
                 phase=ErrorPhase.SQL_EXECUTION,
-                metadata={DIALECT_SQL: dialect_sql},
+                metadata={DIALECT_SQL: plan.dialect_sql},
             ) from e
 
     def dry_run(self, sql: str, properties: dict | None = None) -> None:
