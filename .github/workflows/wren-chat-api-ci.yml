@@ -1,0 +1,60 @@
+name: Wren Chat API CI
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - 'services/wren-chat-api/**'
+      - '.github/workflows/wren-chat-api-ci.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/wren-chat-api/**'
+      - '.github/workflows/wren-chat-api-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: services/wren-chat-api
+
+jobs:
+  test:
+    name: lint and tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: wren_chat_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d wren_chat_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      WREN_CHAT_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/wren_chat_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v4
+      - name: Install package and test dependencies
+        run: uv pip install --system -e ".[dev]"
+      - name: Check formatting and lint
+        run: |
+          ruff format --check src tests
+          ruff check src tests
+      - name: Run unit and PostgreSQL integration tests
+        run: pytest -v

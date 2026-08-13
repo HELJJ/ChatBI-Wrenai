@@ -60,6 +60,15 @@ class FakeConnection:
         return Transaction(None)
 
 
+class PostgreSQLTypeCheckingConnection(FakeConnection):
+    """Reject untyped parameters passed to polymorphic JSON functions."""
+
+    async def execute(self, statement, parameters=None):
+        if "'message', %s," in statement:
+            raise RuntimeError("PostgreSQL cannot infer the message parameter type")
+        return await super().execute(statement, parameters)
+
+
 class FakePool:
     def __init__(self, connection) -> None:
         self.connection_value = connection
@@ -155,6 +164,26 @@ async def test_recovery_updates_attempts_before_requests_in_one_transaction() ->
     assert "UPDATE chat_audit_requests" in connection.calls[1][0]
     assert connection.calls[0][1][1] == recovery_time
     assert connection.calls[1][1][1] == recovery_time
+
+
+async def test_recovery_types_json_message_parameters_for_postgresql() -> None:
+    connection = PostgreSQLTypeCheckingConnection(
+        [
+            FakeCursor(rows=[]),
+            FakeCursor(rows=[]),
+        ]
+    )
+
+    counts = await recover_interrupted(
+        FakePool(connection),
+        now=datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc),
+        threshold=timedelta(seconds=150),
+    )
+
+    assert counts == RecoveryCounts(
+        attempts_recovered=0,
+        requests_recovered=0,
+    )
 
 
 async def test_recovery_loop_runs_immediately_and_stops(monkeypatch) -> None:

@@ -50,7 +50,7 @@ async def recover_interrupted(
                                 THEN 'SQL_PLANNING'
                             ELSE 'SQL_EXECUTION'
                         END,
-                        'message', %s,
+                        'message', %s::text,
                         'metadata', jsonb_build_object('outcome', 'unknown')
                     ),
                     completed_at = %s,
@@ -94,7 +94,7 @@ async def recover_interrupted(
                     error = jsonb_build_object(
                         'code', 'REQUEST_INTERRUPTED',
                         'phase', 'REQUEST',
-                        'message', %s,
+                        'message', %s::text,
                         'metadata', jsonb_build_object()
                     ),
                     completed_at = %s
