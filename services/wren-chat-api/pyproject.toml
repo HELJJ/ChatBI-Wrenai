@@ -39,6 +39,9 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/wren_chat_api"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"migrations" = "wren_chat_api/migrations"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
