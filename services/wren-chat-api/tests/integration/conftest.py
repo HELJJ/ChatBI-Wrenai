@@ -12,6 +12,7 @@ import pytest_asyncio
 from wren_chat_api.audit import AuditRepository
 from wren_chat_api.config import Settings
 from wren_chat_api.db import apply_migrations, create_app_pool, default_migrations_dir
+from wren_chat_api.leases import LeaseRepository
 
 
 @pytest.fixture(scope="session")
@@ -70,3 +71,8 @@ async def clean_audit_tables(app_pool) -> AsyncIterator[None]:
 @pytest.fixture
 def audit_repo(app_pool, settings: Settings) -> AuditRepository:
     return AuditRepository(app_pool, max_sql_attempts=settings.max_sql_attempts)
+
+
+@pytest.fixture
+def leases(app_pool) -> LeaseRepository:
+    return LeaseRepository(app_pool)
