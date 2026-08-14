@@ -34,6 +34,12 @@ class SessionBusy(ChatServiceError):
     public_message = "Another request is already running for this session."
 
 
+class SessionLeaseLost(ChatServiceError):
+    code = "SESSION_LEASE_LOST"
+    http_status = 409
+    public_message = "Session ownership was lost during the request."
+
+
 class QuestionUnanswerable(ChatServiceError):
     code = "QUESTION_UNANSWERABLE"
     http_status = 422
