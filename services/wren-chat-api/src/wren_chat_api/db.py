@@ -31,13 +31,16 @@ def create_app_pool(settings: Settings) -> AsyncConnectionPool:
 
 
 def create_checkpoint_pool(settings: Settings) -> AsyncConnectionPool:
-    """Create the isolated pool required by the LangGraph checkpointer."""
+    """Create the isolated pool required by the LangGraph checkpointer.
+
+    The checkpointer indexes result rows positionally, so connections must
+    keep psycopg's default tuple row factory (no ``dict_row``).
+    """
     return AsyncConnectionPool(
         conninfo=settings.state_database_url.get_secret_value(),
         kwargs={
             "autocommit": True,
             "prepare_threshold": 0,
-            "row_factory": dict_row,
         },
         open=False,
         name="wren-chat-checkpoint",

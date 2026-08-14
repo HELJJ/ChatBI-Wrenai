@@ -58,6 +58,12 @@ class PersistenceFailed(ChatServiceError):
     public_message = "Unable to persist the request state."
 
 
+class InternalError(ChatServiceError):
+    code = "INTERNAL_ERROR"
+    http_status = 500
+    public_message = "An internal error occurred."
+
+
 class UpstreamFailed(ChatServiceError):
     code = "UPSTREAM_FAILED"
     http_status = 502

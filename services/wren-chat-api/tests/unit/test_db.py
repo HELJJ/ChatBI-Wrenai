@@ -40,10 +40,10 @@ def test_checkpoint_pool_has_isolated_checkpointer_semantics(
     pool = create_checkpoint_pool(make_settings(tmp_path))
 
     assert pool.name == "wren-chat-checkpoint"
+    # Tuple rows (no dict_row): the checkpointer unpacks rows positionally.
     assert pool.kwargs == {
         "autocommit": True,
         "prepare_threshold": 0,
-        "row_factory": dict_row,
     }
     assert pool.closed
 
