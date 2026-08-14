@@ -62,3 +62,15 @@ class RequestTimedOut(ChatServiceError):
     code = "REQUEST_TIMED_OUT"
     http_status = 504
     public_message = "The request timed out."
+
+
+class ReadOnlySqlRequired(ChatServiceError):
+    code = "READ_ONLY_SQL_REQUIRED"
+    http_status = 422
+    public_message = "Only single read-only queries are allowed."
+
+
+class ResultTooLarge(ChatServiceError):
+    code = "RESULT_TOO_LARGE"
+    http_status = 413
+    public_message = "The query result exceeded the configured size limit."
