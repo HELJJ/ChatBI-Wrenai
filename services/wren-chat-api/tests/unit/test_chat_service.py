@@ -30,20 +30,28 @@ def make_settings(tmp_path, **overrides) -> Settings:
     return Settings(**values)
 
 
+_UNSET = object()
+
+
 class FakeLeases:
     def __init__(
         self,
         events,
         *,
-        lease: Lease | None = None,
+        lease: Lease | None | object = _UNSET,
         renew_result: bool = True,
     ) -> None:
         self.events = events
-        self.lease = lease or Lease(
-            session_id="s-1",
-            lease_id=uuid4(),
-            expires_at=datetime.now(timezone.utc) + timedelta(seconds=30),
-        )
+        # lease=None means "acquisition fails (busy)"; the sentinel keeps
+        # that distinct from "caller did not specify a lease".
+        if lease is _UNSET:
+            lease = Lease(
+                session_id="s-1",
+                lease_id=uuid4(),
+                expires_at=datetime.now(timezone.utc)
+                + timedelta(seconds=30),
+            )
+        self.lease = lease  # type: ignore[assignment]
         self.renew_result = renew_result
 
     async def acquire(self, session_id, *, ttl):
