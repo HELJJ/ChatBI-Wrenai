@@ -158,13 +158,17 @@ async def test_non_wren_tools_are_invoked_and_returned(tmp_path):
     state = await graph.aget_state({"configurable": {"thread_id": "thread-1"}})
 
     assert answer == "listed"
-    tool_messages = [
-        message
+    # The tool result reaches the model on its next invocation (received[1]);
+    # compaction then strips it from the durable state by design.
+    second_model_input = model.received[1]
+    assert any(
+        isinstance(message, ToolMessage) and "model-list" in message.content
+        for message in second_model_input
+    )
+    assert not any(
+        isinstance(message, ToolMessage)
         for message in state.values["messages"]
-        if isinstance(message, ToolMessage)
-    ]
-    assert len(tool_messages) == 1
-    assert "model-list" in tool_messages[0].content
+    )
 
 
 async def test_state_keeps_six_turns_and_strips_tool_traffic(tmp_path):
