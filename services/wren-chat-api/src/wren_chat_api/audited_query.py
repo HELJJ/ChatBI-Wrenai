@@ -139,6 +139,10 @@ class AuditedQuery:
             # The real planning/execution outcome is unknown; the recovery
             # worker later records SQL_ATTEMPT_INTERRUPTED.
             raise
+        except PersistenceFailed:
+            # Audit persistence failure must stop the request; it is never
+            # downgraded to a model-visible, retryable SQL error.
+            raise
         except Exception as exc:
             error = _structure_error(exc, phase=phase)
             await self._persist(
