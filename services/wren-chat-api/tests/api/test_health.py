@@ -2,7 +2,8 @@
 
 import httpx
 import pytest
-from fastapi import ASGITransport, FastAPI
+from fastapi import FastAPI
+from httpx import ASGITransport
 
 from wren_chat_api.app import create_app
 from wren_chat_api.config import Settings
