@@ -32,14 +32,15 @@ _GENERIC_FAILURE_CODE = "SQL_ATTEMPT_FAILED"
 
 
 class RunContext(StrictModel):
-    """Identity of one running chat request.
+    """Identity and query component of one running chat request.
 
-    Task 7 extends this with the audited query component itself when the
-    agent graph threads runtime context through tool nodes.
+    The agent graph passes this as runtime context so the sequential tool
+    node can dispatch ``wren_query`` to the audited executor.
     """
 
     request_id: UUID
     session_id: SessionId
+    audited_query: Any = None
 
 
 class AuditedQuery:

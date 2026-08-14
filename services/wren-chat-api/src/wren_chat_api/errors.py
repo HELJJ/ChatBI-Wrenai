@@ -74,3 +74,9 @@ class ResultTooLarge(ChatServiceError):
     code = "RESULT_TOO_LARGE"
     http_status = 413
     public_message = "The query result exceeded the configured size limit."
+
+
+class InvalidFinalAnswer(ChatServiceError):
+    code = "INVALID_FINAL_ANSWER"
+    http_status = 502
+    public_message = "The model did not produce a final answer."
