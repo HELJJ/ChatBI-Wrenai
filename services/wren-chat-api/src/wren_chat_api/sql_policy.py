@@ -7,26 +7,35 @@ from sqlglot import expressions as exp
 
 from wren_chat_api.errors import ReadOnlySqlRequired
 
-_FORBIDDEN_NODES: tuple[type[exp.Expression], ...] = (
-    exp.Insert,
-    exp.Update,
-    exp.Delete,
-    exp.Merge,
-    exp.Drop,
-    exp.Create,
-    exp.Alter,
-    exp.AlterTable,
-    exp.TruncateTable,
-    exp.Grant,
-    exp.Revoke,
-    exp.Transaction,
-    exp.Commit,
-    exp.Rollback,
-    exp.Command,
-    exp.Set,
-    exp.Use,
-    exp.Copy,
-    exp.Into,
+# Node names resolved dynamically: sqlglot renames or removes DDL/command
+# expression classes between versions, and a missing guard class must never
+# break importing the policy.
+_FORBIDDEN_NODE_NAMES = (
+    "Insert",
+    "Update",
+    "Delete",
+    "Merge",
+    "Drop",
+    "Create",
+    "Alter",
+    "AlterTable",
+    "TruncateTable",
+    "Grant",
+    "Revoke",
+    "Transaction",
+    "Commit",
+    "Rollback",
+    "Command",
+    "Set",
+    "Use",
+    "Copy",
+    "Into",
+)
+
+_FORBIDDEN_NODES: tuple[type[exp.Expression], ...] = tuple(
+    node_class
+    for name in _FORBIDDEN_NODE_NAMES
+    if (node_class := getattr(exp, name, None)) is not None
 )
 
 
