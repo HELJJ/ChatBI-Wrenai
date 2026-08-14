@@ -33,6 +33,10 @@ class ScriptedModel(BaseChatModel):
     cursor: int = 0
     received: list = Field(default_factory=list)
 
+    @property
+    def _llm_type(self) -> str:
+        return "scripted-test-model"
+
     def bind_tools(self, tools, **kwargs):
         return self
 
@@ -118,6 +122,7 @@ async def test_multiple_tool_calls_run_sequentially_in_model_order(tmp_path):
 async def test_non_wren_tools_are_invoked_and_returned(tmp_path):
     @tool("wren_list_models")
     def list_models() -> str:
+        """List all models defined in this Wren project."""
         return "model-list"
 
     settings = make_settings(tmp_path)

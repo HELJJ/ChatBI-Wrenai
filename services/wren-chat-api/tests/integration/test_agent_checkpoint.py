@@ -24,6 +24,10 @@ class ScriptedModel(BaseChatModel):
     cursor: int = 0
     received: list = Field(default_factory=list)
 
+    @property
+    def _llm_type(self) -> str:
+        return "scripted-test-model"
+
     def bind_tools(self, tools, **kwargs):
         return self
 
