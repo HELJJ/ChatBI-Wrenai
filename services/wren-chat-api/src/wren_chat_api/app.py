@@ -184,7 +184,20 @@ def _production_lifespan(settings: Settings) -> Callable[[FastAPI], Any]:
         checkpointer = AsyncPostgresSaver(checkpoint_pool)
         await checkpointer.setup()
 
-        model = ChatOpenAI(model=settings.model)
+        model = ChatOpenAI(
+            model=settings.model,
+            api_key=(
+                settings.model_api_key.get_secret_value()
+                if settings.model_api_key is not None
+                else None
+            ),
+            base_url=settings.model_base_url,
+            model_kwargs={
+                "extra_body": {
+                    "enable_thinking": settings.model_enable_thinking,
+                }
+            },
+        )
 
         async def summarize(history: str, previous: str) -> str:
             prompt = (
@@ -216,6 +229,7 @@ def _production_lifespan(settings: Settings) -> Callable[[FastAPI], Any]:
             toolkit=toolkit,
             settings=settings,
             executor=executor,
+            dialect=settings.sql_dialect,
         )
         graph = build_chat_graph(
             toolkit,

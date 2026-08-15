@@ -14,7 +14,9 @@ def make_settings(tmp_path: Path, **overrides) -> Settings:
         "model": "test-model",
     }
     values.update(overrides)
-    return Settings(**values)
+    # _env_file=None keeps tests hermetic: a deployment .env next to the
+    # service must never leak into unit-test settings.
+    return Settings(**values, _env_file=None)
 
 
 def test_required_settings_must_be_provided(monkeypatch) -> None:
@@ -27,7 +29,7 @@ def test_required_settings_must_be_provided(monkeypatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
     with pytest.raises(ValidationError):
-        Settings()
+        Settings(_env_file=None)
 
 
 def test_settings_use_confirmed_defaults(tmp_path: Path) -> None:
@@ -59,9 +61,60 @@ def test_environment_uses_state_database_name(monkeypatch, tmp_path: Path) -> No
     monkeypatch.setenv("WREN_CHAT_PROJECT_PATH", str(tmp_path))
     monkeypatch.setenv("WREN_CHAT_MODEL", "test-model")
 
-    settings = Settings()
+    settings = Settings(_env_file=None)
 
     assert settings.state_database_url.get_secret_value().endswith("/wren_chat")
+
+
+def test_settings_load_from_env_file(monkeypatch, tmp_path: Path) -> None:
+    for name in (
+        "WREN_CHAT_STATE_DATABASE_URL",
+        "WREN_CHAT_API_KEY",
+        "WREN_CHAT_PROJECT_PATH",
+        "WREN_CHAT_MODEL",
+        "WREN_CHAT_MODEL_API_KEY",
+        "WREN_CHAT_MODEL_BASE_URL",
+        "WREN_CHAT_SQL_DIALECT",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    env_file = tmp_path / "env"
+    env_file.write_text(
+        "WREN_CHAT_STATE_DATABASE_URL="
+        "postgresql://chat:secret@localhost:5432/wren_chat\n"
+        "WREN_CHAT_API_KEY=api-secret\n"
+        f"WREN_CHAT_PROJECT_PATH={tmp_path}\n"
+        "WREN_CHAT_MODEL=file-model\n"
+        "WREN_CHAT_MODEL_API_KEY=file-model-key\n"
+        "WREN_CHAT_MODEL_BASE_URL=https://example.invalid/v1\n"
+        "WREN_CHAT_SQL_DIALECT=oracle\n",
+        encoding="utf-8",
+    )
+
+    settings = Settings(_env_file=env_file)
+
+    assert settings.model == "file-model"
+    assert settings.model_api_key is not None
+    assert settings.model_api_key.get_secret_value() == "file-model-key"
+    assert settings.model_base_url == "https://example.invalid/v1"
+    assert settings.sql_dialect == "oracle"
+
+
+def test_model_endpoint_defaults_are_local(monkeypatch, tmp_path: Path) -> None:
+    for name in (
+        "WREN_CHAT_MODEL_API_KEY",
+        "WREN_CHAT_MODEL_BASE_URL",
+        "WREN_CHAT_SQL_DIALECT",
+        "WREN_CHAT_MODEL_ENABLE_THINKING",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    settings = make_settings(tmp_path)
+
+    assert settings.model_api_key is None
+    assert settings.model_base_url is None
+    assert settings.sql_dialect == "postgres"
+    assert settings.model_enable_thinking is False
 
 
 @pytest.mark.parametrize(

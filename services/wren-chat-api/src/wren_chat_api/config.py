@@ -16,6 +16,8 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="WREN_CHAT_",
+        env_file=".env",
+        env_file_encoding="utf-8",
         extra="forbid",
         frozen=True,
         validate_default=True,
@@ -25,6 +27,14 @@ class Settings(BaseSettings):
     api_key: SecretStr
     project_path: Path
     model: str = Field(min_length=1)
+    model_api_key: SecretStr | None = None
+    model_base_url: str | None = None
+    # sqlglot dialect used by the read-only SQL gate. Must match the project's
+    # data source (e.g. "oracle" for DM8, "postgres" for PostgreSQL).
+    sql_dialect: str = Field(default="postgres", min_length=1)
+    # Vendor extension (DashScope qwen3): disable reasoning in agent loops by
+    # default; thinking slows tool-calling and breaks non-streaming responses.
+    model_enable_thinking: bool = False
 
     question_max_chars: int = Field(default=4_000, ge=1, le=4_000)
     default_row_limit: int = Field(default=100, ge=1, le=1_000)
