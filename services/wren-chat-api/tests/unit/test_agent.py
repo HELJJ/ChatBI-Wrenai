@@ -171,7 +171,54 @@ async def test_non_wren_tools_are_invoked_and_returned(tmp_path):
     )
 
 
-async def test_state_keeps_six_turns_and_strips_tool_traffic(tmp_path):
+async def test_oversized_non_wren_tool_output_is_bounded(tmp_path):
+    @tool("wren_fetch_context")
+    def fetch_context(question: str) -> str:
+        """Fetch schema and business context relevant to the question."""
+        return "x" * 200_000
+
+    settings = make_settings(tmp_path)
+    model = ScriptedModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "wren_fetch_context",
+                        "args": {"question": "tables"},
+                        "id": "call-1",
+                    }
+                ],
+            ),
+            AIMessage(content="bounded"),
+        ]
+    )
+    graph = build_chat_graph(
+        toolkit=FakeToolkit([fetch_context]),
+        model=model,
+        summarizer=lambda history, previous: previous,
+        checkpointer=InMemorySaver(),
+        settings=settings,
+    )
+    context = RunContext(
+        request_id=uuid4(),
+        session_id="s-1",
+        audited_query=FakeAuditedQuery(),
+    )
+
+    answer = await invoke_chat(graph, "thread-1", "tables", context, settings)
+
+    assert answer == "bounded"
+    second_model_input = model.received[1]
+    tool_messages = [
+        message
+        for message in second_model_input
+        if isinstance(message, ToolMessage)
+    ]
+    assert tool_messages, "tool result must reach the model's next call"
+    bounded = tool_messages[0].content
+    assert len(bounded.encode()) <= settings.max_tool_content_bytes
+    assert "tool output truncated" in bounded
     settings = make_settings(tmp_path)
     audited = FakeAuditedQuery()
     responses = [AIMessage(content=f"answer {index}") for index in range(1, 7)]
