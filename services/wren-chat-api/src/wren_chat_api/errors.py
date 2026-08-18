@@ -25,70 +25,70 @@ class ChatServiceError(Exception):
 class AuthenticationFailed(ChatServiceError):
     code = "AUTHENTICATION_FAILED"
     http_status = 401
-    public_message = "Authentication failed."
+    public_message = "身份验证失败，请检查 API 密钥后重试。"
 
 
 class SessionBusy(ChatServiceError):
     code = "SESSION_BUSY"
     http_status = 409
-    public_message = "Another request is already running for this session."
+    public_message = "该会话正在处理上一个查询，请等待其完成后再提问。"
 
 
 class SessionLeaseLost(ChatServiceError):
     code = "SESSION_LEASE_LOST"
     http_status = 409
-    public_message = "Session ownership was lost during the request."
+    public_message = "会话状态异常（处理权丢失），请重新提问；若持续出现请开启新会话。"
 
 
 class QuestionUnanswerable(ChatServiceError):
     code = "QUESTION_UNANSWERABLE"
     http_status = 422
-    public_message = "Unable to complete the data question."
+    public_message = "无法完成该数据问题，请缩小问题范围、指定数据表名或换个问法重试。"
 
 
 class CapacityExceeded(ChatServiceError):
     code = "CAPACITY_EXCEEDED"
     http_status = 429
-    public_message = "The service is temporarily at capacity."
+    public_message = "服务当前繁忙，请稍后重试。"
 
 
 class PersistenceFailed(ChatServiceError):
     code = "PERSISTENCE_FAILED"
     http_status = 500
-    public_message = "Unable to persist the request state."
+    public_message = "服务状态存储异常，请稍后重试；若持续出现请联系管理员。"
 
 
 class InternalError(ChatServiceError):
     code = "INTERNAL_ERROR"
     http_status = 500
-    public_message = "An internal error occurred."
+    public_message = "服务内部错误，请稍后重试；若持续出现请联系管理员。"
 
 
 class UpstreamFailed(ChatServiceError):
     code = "UPSTREAM_FAILED"
     http_status = 502
-    public_message = "A required upstream service failed."
+    public_message = "上游模型服务异常，请稍后重试；若持续出现请联系管理员。"
 
 
 class RequestTimedOut(ChatServiceError):
     code = "REQUEST_TIMED_OUT"
     http_status = 504
-    public_message = "The request timed out."
+    public_message = "查询超时，请简化问题、缩小查询范围后重试。"
 
 
 class ReadOnlySqlRequired(ChatServiceError):
     code = "READ_ONLY_SQL_REQUIRED"
     http_status = 422
-    public_message = "Only single read-only queries are allowed."
+    public_message = "仅允许单条只读查询，请修改后重试。"
 
 
 class ResultTooLarge(ChatServiceError):
     code = "RESULT_TOO_LARGE"
     http_status = 413
-    public_message = "The query result exceeded the configured size limit."
+    public_message = "查询结果超出大小限制，请缩小时间范围或减少返回字段后重试。"
 
 
 class InvalidFinalAnswer(ChatServiceError):
     code = "INVALID_FINAL_ANSWER"
     http_status = 502
-    public_message = "The model did not produce a final answer."
+    public_message = "模型未能生成有效回答，请重试或换种问法。"

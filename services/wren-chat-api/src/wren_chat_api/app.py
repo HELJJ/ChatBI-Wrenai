@@ -42,7 +42,9 @@ from wren_chat_api.recovery import run_recovery_loop
 
 logger = logging.getLogger(__name__)
 
-_INVALID_REQUEST_MESSAGE = "Request validation failed."
+_INVALID_REQUEST_MESSAGE = (
+    "请求参数不合法，请检查会话 ID 与问题内容（问题不超过 4000 字符）。"
+)
 
 
 class AppOverrides(TypedDict, total=False):
@@ -118,7 +120,7 @@ def create_app(
                 content=ErrorResponse(
                     error=ErrorBody(
                         code="SERVICE_UNAVAILABLE",
-                        message="The service is not ready.",
+                        message="服务尚未就绪，请稍后重试。",
                     )
                 ).model_dump(),
             )

@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from langgraph.errors import GraphRecursionError
+from openai import APIError as OpenAIAPIError
 
 from wren_chat_api.agent import invoke_chat
 from wren_chat_api.audit import AuditRepository, RequestAlreadyTerminal
@@ -22,8 +23,10 @@ from wren_chat_api.contracts import (
 from wren_chat_api.errors import (
     ChatServiceError,
     PersistenceFailed,
+    RequestTimedOut,
     SessionBusy,
     SessionLeaseLost,
+    UpstreamFailed,
 )
 from wren_chat_api.identity import derive_thread_id
 from wren_chat_api.leases import Lease, LeaseRepository
@@ -40,6 +43,31 @@ _RECURSION_LIMIT_ANSWER = (
     "这个问题需要的处理步骤过多，未能完成查询。"
     "请尝试：缩小问题范围、明确指定数据表名、或拆分成几个更简单的问题后重试。"
 )
+
+# Graceful degradation answer when the model endpoint rejects the request for
+# exceeding its context window. Session history is the usual culprit, so the
+# first recommendation is a fresh session (new session_id = new thread).
+_CONTEXT_OVERFLOW_ANSWER = (
+    "本次对话内容已超出模型上下文窗口限制，当前会话可能积累了过长的历史记录。"
+    "建议：开启一个新的会话（更换 session_id）重新提问；"
+    "如仍出现，请缩小问题范围或减少单次查询涉及的数据表。"
+)
+
+# Substrings (lowercase) that model APIs use to report context-window
+# overflow, e.g. OpenAI "maximum context length", vLLM "This model's maximum
+# context length is", CMCC MaaS "input ids length ... maxPositionEmbeddings".
+_CONTEXT_OVERFLOW_MARKERS = (
+    "context length",
+    "maxpositionembeddings",
+    "prompt is too long",
+    "input ids length",
+)
+
+
+def _is_context_overflow(exc: Exception) -> bool:
+    """True when the exception text matches known context-overflow phrasing."""
+    text = str(exc).lower()
+    return any(marker in text for marker in _CONTEXT_OVERFLOW_MARKERS)
 
 
 class ChatService:
@@ -117,9 +145,25 @@ class ChatService:
                 request.session_id,
             )
             answer = _RECURSION_LIMIT_ANSWER
+        except TimeoutError as exc:
+            timed_out = RequestTimedOut(cause=exc)
+            await self._fail_request_safely(request_id, timed_out)
+            raise timed_out from exc
         except Exception as exc:
-            await self._fail_request_safely(request_id, exc)
-            raise
+            if _is_context_overflow(exc):
+                logger.warning(
+                    "model context window exceeded for session %s",
+                    request.session_id,
+                    exc_info=True,
+                )
+                answer = _CONTEXT_OVERFLOW_ANSWER
+            elif isinstance(exc, OpenAIAPIError):
+                upstream = UpstreamFailed(cause=exc)
+                await self._fail_request_safely(request_id, upstream)
+                raise upstream from exc
+            else:
+                await self._fail_request_safely(request_id, exc)
+                raise
 
         await self._guarded(
             self._audit.succeed_request(request_id=request_id, answer=answer),

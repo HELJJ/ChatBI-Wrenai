@@ -4,17 +4,21 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
+import httpx
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.errors import GraphRecursionError
+from openai import APIConnectionError
 
 from wren_chat_api.chat import ChatService
 from wren_chat_api.config import Settings
 from wren_chat_api.contracts import ChatRequest
 from wren_chat_api.errors import (
     PersistenceFailed,
+    RequestTimedOut,
     SessionBusy,
     SessionLeaseLost,
+    UpstreamFailed,
 )
 from wren_chat_api.leases import Lease
 
@@ -277,3 +281,78 @@ async def test_recursion_limit_returns_graceful_answer_not_500(tmp_path):
         "audit:succeed_request",
         "lease:release",
     ]
+
+
+async def test_context_overflow_returns_graceful_answer_with_new_session_hint(
+    tmp_path,
+):
+    """A model-endpoint context-window rejection (CMCC MaaS 424 phrasing)
+    must degrade to a 200 answer whose guidance includes starting a fresh
+    session, not a 500 INTERNAL_ERROR."""
+    events: list[str] = []
+    graph = FakeGraph(events)
+    graph.ainvoke = _raising_invoke(
+        RuntimeError(
+            "Error code: 424 - input ids length cannot be greater than "
+            "maxPositionEmbeddings"
+        )
+    )
+    audit = FakeAudit(events)
+    service = make_service(
+        events, make_settings(tmp_path), audit=audit, graph=graph
+    )
+
+    response = await service.ask(make_request())
+
+    assert response.session_id == "s-1"
+    assert "新的会话" in response.answer
+    assert audit.failed_errors == []
+    assert events == [
+        "lease:acquire",
+        "audit:start_request",
+        "audit:succeed_request",
+        "lease:release",
+    ]
+
+
+async def test_request_timeout_maps_to_504_typed_error(tmp_path):
+    """asyncio.timeout's TimeoutError must surface as REQUEST_TIMED_OUT (504)
+    with guidance, not the generic 500 INTERNAL_ERROR."""
+    events: list[str] = []
+    graph = FakeGraph(events)
+    graph.ainvoke = _raising_invoke(TimeoutError("cancel scope timed out"))
+    audit = FakeAudit(events)
+    service = make_service(
+        events, make_settings(tmp_path), audit=audit, graph=graph
+    )
+
+    with pytest.raises(RequestTimedOut):
+        await service.ask(make_request())
+
+    assert len(audit.failed_errors) == 1
+    assert audit.failed_errors[0]["code"] == "REQUEST_TIMED_OUT"
+    assert events.index("audit:fail_request") < events.index("lease:release")
+
+
+async def test_model_endpoint_failure_maps_to_502_upstream_failed(tmp_path):
+    """OpenAI-compatible endpoint failures (MaaS outages) must surface as
+    UPSTREAM_FAILED (502), not INTERNAL_ERROR (500)."""
+    events: list[str] = []
+    graph = FakeGraph(events)
+    graph.ainvoke = _raising_invoke(
+        APIConnectionError(
+            request=httpx.Request(
+                "POST", "https://maas.example/v1/chat/completions"
+            )
+        )
+    )
+    audit = FakeAudit(events)
+    service = make_service(
+        events, make_settings(tmp_path), audit=audit, graph=graph
+    )
+
+    with pytest.raises(UpstreamFailed):
+        await service.ask(make_request())
+
+    assert len(audit.failed_errors) == 1
+    assert audit.failed_errors[0]["code"] == "UPSTREAM_FAILED"
