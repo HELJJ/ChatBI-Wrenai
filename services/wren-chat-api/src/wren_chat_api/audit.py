@@ -78,8 +78,8 @@ class AuditRepository:
         *,
         max_sql_attempts: int,
     ) -> None:
-        if not 1 <= max_sql_attempts <= 3:
-            raise ValueError("max_sql_attempts must be between 1 and 3")
+        if not 1 <= max_sql_attempts <= 100:
+            raise ValueError("max_sql_attempts must be between 1 and 100")
         self.pool = pool
         self.max_sql_attempts = max_sql_attempts
 

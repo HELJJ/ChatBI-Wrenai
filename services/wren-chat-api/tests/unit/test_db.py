@@ -64,7 +64,20 @@ async def test_migrations_require_at_least_one_sql_file(tmp_path: Path) -> None:
         await apply_migrations(None, tmp_path)
 
 
-@pytest.mark.parametrize("maximum", [0, 4])
+@pytest.mark.parametrize("maximum", [0, 101])
 def test_audit_repository_enforces_hard_attempt_limit(maximum: int) -> None:
-    with pytest.raises(ValueError, match="between 1 and 3"):
+    with pytest.raises(ValueError, match="between 1 and 100"):
         AuditRepository(None, max_sql_attempts=maximum)
+
+
+def test_audit_repository_accepts_configured_default_attempts(
+    tmp_path: Path,
+) -> None:
+    """Startup wiring passes settings.max_sql_attempts into AuditRepository;
+    the hard bound must track the config bound or the app fails to boot
+    (field incident 2026-08-18: default 50 vs hard-coded bound 3)."""
+    settings = make_settings(tmp_path)
+
+    repository = AuditRepository(None, max_sql_attempts=settings.max_sql_attempts)
+
+    assert repository.max_sql_attempts == settings.max_sql_attempts
