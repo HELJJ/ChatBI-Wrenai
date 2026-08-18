@@ -15,6 +15,7 @@ from wren.model.error import WrenError
 _SECRET_PATTERNS = ("password", "secret", "token", "credential")
 _DEFAULT_METADATA_CAP = 4 * 1024
 _DEFAULT_CONTENT_CAP = 16 * 1024
+_DEFAULT_DATA_CAP = 64 * 1024
 
 
 def json_safe(value: Any) -> Any:
@@ -79,12 +80,30 @@ def make_success(
     data: dict[str, Any],
     warnings: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Construct a success envelope."""
+    """Construct a success envelope.
+
+    The JSON-serialized ``data`` payload is capped at ``_DEFAULT_DATA_CAP``
+    bytes. An over-limit payload is replaced by the same truncation marker
+    ``cap_size`` produces, and a warning is appended so agents know to rely
+    on ``content`` — this bounds what a tool result can inject into LLM
+    context regardless of which tool produced it.
+    """
+    encoded_size = len(json.dumps(data, default=str).encode("utf-8"))
+    out_warnings = list(warnings or [])
+    if encoded_size > _DEFAULT_DATA_CAP:
+        data = {
+            "_truncated": True,
+            "original_size_bytes": encoded_size,
+        }
+        out_warnings.append(
+            f"data truncated: payload {encoded_size} bytes exceeds "
+            f"{_DEFAULT_DATA_CAP}-byte cap; rely on the content field"
+        )
     return {
         "ok": True,
         "content": content,
         "data": data,
-        "warnings": warnings or [],
+        "warnings": out_warnings,
     }
 
 

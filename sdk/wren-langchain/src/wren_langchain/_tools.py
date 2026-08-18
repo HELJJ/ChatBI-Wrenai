@@ -101,6 +101,38 @@ def _build_wren_dry_plan(toolkit: WrenToolkit, *, raise_on_error: bool):
     return wren_dry_plan
 
 
+def _summarize_models(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Compact per-model summaries: name, column_count, trimmed description.
+
+    The raw manifest models — including every column definition — must stay
+    out of the envelope ``data``: on a 100+ model project that payload alone
+    serializes to well over 100k tokens and overflows LLM context. The agent
+    picks models from these summaries, then pulls per-model detail via
+    ``wren_fetch_context`` / ``describe_model``.
+    """
+    summaries = []
+    for m in manifest.get("models", []) or []:
+        if not isinstance(m, dict):
+            continue
+        cols = m.get("columns", []) or []
+        props = m.get("properties") or {}
+        if not isinstance(props, dict):
+            props = {}
+        desc = props.get("description") or m.get("description") or ""
+        if not isinstance(desc, str):
+            desc = str(desc) if desc is not None else ""
+        if len(desc) > 80:
+            desc = desc[:77] + "..."
+        summaries.append(
+            {
+                "name": m.get("name", ""),
+                "column_count": len(cols) if isinstance(cols, list) else 0,
+                "description": desc,
+            }
+        )
+    return summaries
+
+
 def _build_wren_list_models(toolkit: WrenToolkit, *, raise_on_error: bool):
     @tool("wren_list_models")
     def wren_list_models() -> dict[str, Any]:
@@ -112,9 +144,10 @@ def _build_wren_list_models(toolkit: WrenToolkit, *, raise_on_error: bool):
                 raise
             return make_error(exc)
 
+        summaries = _summarize_models(manifest)
         return make_success(
             content=format_list_models_content(manifest),
-            data={"models": manifest.get("models", []) or []},
+            data={"model_count": len(summaries), "models": summaries},
         )
 
     return wren_list_models

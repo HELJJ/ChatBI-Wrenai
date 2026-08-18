@@ -37,6 +37,32 @@ def test_make_success_includes_warnings_when_provided():
     assert result["warnings"] == ["content truncated: showed 32 of 100 rows"]
 
 
+def test_make_success_caps_oversized_data_payload():
+    """Data payloads beyond the cap are replaced by a truncation marker and a
+    warning is appended, so no tool can inject unbounded bytes into context."""
+    big = {"rows": ["x" * 100 for _ in range(1000)]}  # ~100 KB serialized
+    result = make_success(
+        content="preview",
+        data=big,
+        warnings=["existing warning"],
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["_truncated"] is True
+    assert result["data"]["original_size_bytes"] > 64 * 1024
+    assert "data truncated" in result["warnings"][-1]
+    assert result["warnings"][0] == "existing warning"
+
+
+def test_make_success_passes_small_data_through_unchanged():
+    """Under the cap, data is returned verbatim with no extra warnings."""
+    data = {"models": [{"name": "orders", "column_count": 2}]}
+    result = make_success(content="table", data=data)
+
+    assert result["data"] == data
+    assert result["warnings"] == []
+
+
 def test_format_error_extracts_wren_error_fields():
     """format_error pulls code, phase, message, metadata from WrenError."""
     exc = WrenError(

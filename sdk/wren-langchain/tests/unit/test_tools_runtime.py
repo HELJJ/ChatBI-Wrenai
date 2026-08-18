@@ -138,4 +138,50 @@ def test_wren_list_models_returns_markdown_table(tmp_project, fake_active_profil
     assert "| model | cols | description |" in envelope["content"]
     assert "| orders | 2 | Customer orders |" in envelope["content"]
     assert "| customers | 1 |  |" in envelope["content"]
-    assert len(envelope["data"]["models"]) == 2
+    assert envelope["data"]["model_count"] == 2
+    assert envelope["data"]["models"] == [
+        {"name": "orders", "column_count": 2, "description": "Customer orders"},
+        {"name": "customers", "column_count": 1, "description": ""},
+    ]
+
+
+def test_wren_list_models_data_omits_column_definitions(
+    tmp_project, fake_active_profile
+):
+    """The envelope `data` must not carry full manifest models (every column
+    definition). On a 172-model project that payload serializes to ~136k
+    tokens and overflows LLM context; summaries keep it to a few KB."""
+    manifest = {
+        "models": [
+            {
+                "name": f"table_{i}",
+                "columns": [
+                    {"name": f"col_{j}", "type": "varchar", "notNull": False}
+                    for j in range(50)
+                ],
+                "properties": {
+                    "description": "x" * 500,
+                    "tags": ["should-not-leak"],
+                },
+            }
+            for i in range(50)
+        ]
+    }
+    (tmp_project / "target" / "mdl.json").write_text(json.dumps(manifest))
+
+    toolkit = WrenToolkit.from_project(tmp_project)
+    tool = _get_tool(toolkit, "wren_list_models")
+
+    envelope = tool.invoke({})
+
+    assert envelope["ok"] is True
+    first = envelope["data"]["models"][0]
+    assert first["name"] == "table_0"
+    assert first["column_count"] == 50
+    assert len(first["description"]) <= 80
+    assert "columns" not in first
+    assert "properties" not in first
+    serialized = json.dumps(envelope["data"])
+    assert "col_1" not in serialized
+    assert "should-not-leak" not in serialized
+    assert len(serialized.encode("utf-8")) < 64 * 1024
