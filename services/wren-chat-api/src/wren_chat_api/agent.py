@@ -37,27 +37,6 @@ _SERVICE_POLICY = (
     "question with zero SQL attempts is an acceptable final answer."
 )
 
-_TOOL_TRUNCATION_MARKER = (
-    "\n...[tool output truncated at {limit} bytes; narrow the request, "
-    'e.g. wren_fetch_context(model="<name>") or an item_type filter]'
-)
-
-
-def _bound_tool_content(content: str, max_bytes: int) -> str:
-    """Cap non-query tool output.
-
-    Schema-shaped tools (wren_fetch_context, wren_get_mdl, ...) can return
-    the whole project manifest; unbounded, that single message can exceed
-    the model provider's context window. wren_query results are bounded
-    separately in results.py; everything else is capped here.
-    """
-    encoded = content.encode()
-    if len(encoded) <= max_bytes:
-        return content
-    marker = _TOOL_TRUNCATION_MARKER.format(limit=max_bytes)
-    keep = max(0, max_bytes - len(marker.encode()))
-    return encoded[:keep].decode(errors="ignore") + marker
-
 Summarizer = Callable[[str, str], "str | Awaitable[str]"]
 
 
@@ -135,9 +114,6 @@ def build_chat_graph(
                 content = json.dumps(envelope, separators=(",", ":"), default=str)
             else:
                 content = await tools_by_name[name].ainvoke(tool_call)
-                content = _bound_tool_content(
-                    str(content), settings.max_tool_content_bytes
-                )
             results.append(
                 ToolMessage(
                     content=str(content),
