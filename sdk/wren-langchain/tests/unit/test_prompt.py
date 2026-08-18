@@ -113,6 +113,23 @@ def test_error_phase_guidance_present_in_prompt(tmp_project, fake_active_profile
     assert "SQL_EXECUTION" in prompt
 
 
+def test_prompt_forbids_invented_column_names(tmp_project, fake_active_profile):
+    """Guards against the observed field failure (kylin-007): the model wrote
+    SQL with hallucinated column names and burned the attempt budget. The
+    prompt must demand verbatim tool-sourced columns and teach the LIMIT 1
+    probe, in every tool configuration (this fixture has memory disabled, so
+    the guidance must survive without wren_fetch_context)."""
+    toolkit = WrenToolkit.from_project(tmp_project)
+    prompt = toolkit.system_prompt()
+
+    assert "verbatim" in prompt.lower()
+    assert "NEVER invent" in prompt
+    assert "SELECT * FROM <model> LIMIT 1" in prompt
+    assert "Invalid column name" in prompt
+    # And the budget-exhausted phase must tell the model to stop querying.
+    assert "SQL_RETRY" in prompt
+
+
 def test_system_prompt_respects_include_memory_write_false(
     tmp_project, fake_active_profile
 ):

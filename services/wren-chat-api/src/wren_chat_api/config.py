@@ -41,12 +41,21 @@ class Settings(BaseSettings):
     max_row_limit: int = Field(default=1_000, ge=1, le=1_000)
     max_result_bytes: int = Field(default=1_048_576, ge=1_024)
     max_tool_content_bytes: int = Field(default=65_536, ge=1_024)
-    max_sql_attempts: int = Field(default=3, ge=1, le=3)
-    graph_recursion_limit: int = Field(default=12, ge=2, le=12)
-    request_timeout_seconds: int = Field(default=120, ge=1, le=120)
+    # SQL budget sized for: 1 schema probe + several fix-and-retry rounds +
+    # the real analytical queries. Observed field failures (kylin-006/007)
+    # burned 3 attempts probing an empty table / hallucinated columns before
+    # the correct query ever ran.
+    max_sql_attempts: int = Field(default=50, ge=1, le=100)
+    # Recursion must cover ~2 steps per agent round (model + tools) plus the
+    # final answer turn; with max_sql_attempts=50 and 2-3 context tools the
+    # graph can legitimately need 60+ steps.
+    graph_recursion_limit: int = Field(default=300, ge=2, le=600)
+    # Must exceed the time 50 SQL attempts + ~150 model calls can take; the
+    # old 120s cap truncated runs before the raised budgets above applied.
+    request_timeout_seconds: int = Field(default=600, ge=1, le=1_800)
     lease_ttl_seconds: int = Field(default=30, ge=2)
     lease_renew_seconds: int = Field(default=10, ge=1)
-    interruption_threshold_seconds: int = Field(default=150, ge=1)
+    interruption_threshold_seconds: int = Field(default=750, ge=1)
     recent_turns: int = Field(default=6, ge=1, le=6)
     wren_workers: int = Field(default=16, ge=1)
     wren_queue_capacity: int = Field(default=32, ge=0)

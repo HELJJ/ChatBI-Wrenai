@@ -45,16 +45,22 @@ _STEP_RECALL = """1. Recall similar past NL→SQL pairs:
    than you would write from scratch."""
 
 _STEP_FETCH = """2. Fetch schema and business context:
-   `wren_fetch_context(question="<user's question>")`
-   Optionally narrow scope with `model="<name>"` or
+   `wren_fetch_context(question="<user's question>", model="<candidate model>")`
+   This returns the ACTUAL column names and business meaning of the relevant
+   models. Always run it before writing SQL against a model you have not
+   queried yet in this conversation. Optionally narrow scope with
    `item_type="model" | "column" | "relationship" | "view"`."""
 
 _STEP_LIST_MODELS_FALLBACK = """1. If you don't already know the available models, call `wren_list_models()`
    to enumerate them."""
 
-_STEP_COMPOSE = (
-    "{n}. Compose SQL targeting Wren model names — NEVER raw database tables."
-)
+_STEP_COMPOSE = """{n}. Compose SQL targeting Wren model names — NEVER raw database tables.
+   Column names MUST be copied verbatim from tool output — schema context, the
+   columns of a previous `wren_query` result, or a probe. NEVER invent column
+   names from the question wording — a query with an invented column fails.
+   If you don't know a model's columns, probe once first:
+   `wren_query(sql="SELECT * FROM <model> LIMIT 1", limit=1)` and use exactly
+   those names in the real query."""
 
 _STEP_DRY_PLAN = """{n}. (Complex queries only) Verify with `wren_dry_plan(sql="...")` before
    executing. "Complex" = subqueries, multi-step CTEs, or JOINs not
@@ -137,7 +143,11 @@ If a tool returns `ok=false`, inspect `error.phase` and `error.message`:
 - `SQL_EXECUTION` → database-side error. `error.metadata.dialect_sql` shows
   the translated SQL — diagnose against the message (type mismatch, missing
   function, permission, timeout). Add explicit `CAST` or simplify the query
-  if needed.
+  if needed. An "Invalid column name" message means the column does not
+  exist — do NOT try more guessed names; probe
+  `SELECT * FROM <model> LIMIT 1` and use the exact returned names.
+- `SQL_RETRY` → the request's SQL attempt budget is exhausted. Stop calling
+  `wren_query` and answer the user with what you found so far.
 
 Don't silently abandon. Either fix and retry, or report the failure to the
 user along with what you tried."""
@@ -147,12 +157,15 @@ def _things_to_avoid_section(tool_names: set[str]) -> str:
     bullets = []
     if "wren_fetch_context" in tool_names:
         bullets.append(
-            "- Don't guess model or column names — call `wren_fetch_context` first."
+            "- Don't guess model or column names — get them from "
+            "`wren_fetch_context` or a `SELECT * FROM <model> LIMIT 1` probe, "
+            "then copy them verbatim into your SQL."
         )
     elif "wren_list_models" in tool_names:
         bullets.append(
             "- Don't guess model or column names — call `wren_list_models()` "
-            "first when in doubt."
+            "first, and probe `SELECT * FROM <model> LIMIT 1` for the columns "
+            "you need."
         )
     if "wren_recall_queries" in tool_names:
         bullets.append(

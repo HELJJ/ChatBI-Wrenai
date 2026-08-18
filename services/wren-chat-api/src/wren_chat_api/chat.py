@@ -8,6 +8,8 @@ from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
+from langgraph.errors import GraphRecursionError
+
 from wren_chat_api.agent import invoke_chat
 from wren_chat_api.audit import AuditRepository, RequestAlreadyTerminal
 from wren_chat_api.audited_query import AuditedQuery, RunContext
@@ -30,6 +32,14 @@ from wren_chat_api.results import redact_secrets
 logger = logging.getLogger(__name__)
 
 _GENERIC_REQUEST_FAILURE_CODE = "REQUEST_FAILED"
+
+# Graceful degradation answer for runs that exhaust the graph step budget.
+# Returned as a normal 200 response (and audited as succeeded) instead of a
+# 500: the caller gets actionable guidance rather than an internal error.
+_RECURSION_LIMIT_ANSWER = (
+    "这个问题需要的处理步骤过多，未能完成查询。"
+    "请尝试：缩小问题范围、明确指定数据表名、或拆分成几个更简单的问题后重试。"
+)
 
 
 class ChatService:
@@ -100,6 +110,13 @@ class ChatService:
                 lease,
                 thread_id,
             )
+        except GraphRecursionError:
+            logger.warning(
+                "recursion limit %s reached for session %s",
+                self._settings.graph_recursion_limit,
+                request.session_id,
+            )
+            answer = _RECURSION_LIMIT_ANSWER
         except Exception as exc:
             await self._fail_request_safely(request_id, exc)
             raise

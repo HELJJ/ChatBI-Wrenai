@@ -40,12 +40,12 @@ def test_settings_use_confirmed_defaults(tmp_path: Path) -> None:
     assert settings.max_row_limit == 1_000
     assert settings.max_result_bytes == 1_048_576
     assert settings.max_tool_content_bytes == 65_536
-    assert settings.max_sql_attempts == 3
-    assert settings.graph_recursion_limit == 12
-    assert settings.request_timeout_seconds == 120
+    assert settings.max_sql_attempts == 50
+    assert settings.graph_recursion_limit == 300
+    assert settings.request_timeout_seconds == 600
     assert settings.lease_ttl_seconds == 30
     assert settings.lease_renew_seconds == 10
-    assert settings.interruption_threshold_seconds == 150
+    assert settings.interruption_threshold_seconds == 750
     assert settings.recent_turns == 6
     assert settings.wren_workers == 16
     assert settings.wren_queue_capacity == 32

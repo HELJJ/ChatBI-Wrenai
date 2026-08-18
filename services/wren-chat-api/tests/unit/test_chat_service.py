@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
+from langgraph.errors import GraphRecursionError
 
 from wren_chat_api.chat import ChatService
 from wren_chat_api.config import Settings
@@ -248,3 +249,31 @@ def _raising_invoke(error: Exception):
         raise error
 
     return ainvoke
+
+
+async def test_recursion_limit_returns_graceful_answer_not_500(tmp_path):
+    """GraphRecursionError must degrade to a normal 200 answer with retry
+    guidance (audited as succeeded), not surface as INTERNAL_ERROR. Field
+    failure kylin-006: 12-step budget exhausted before the final turn."""
+    events: list[str] = []
+    graph = FakeGraph(events)
+    graph.ainvoke = _raising_invoke(
+        GraphRecursionError("Recursion limit of 300 reached")
+    )
+    audit = FakeAudit(events)
+    service = make_service(
+        events, make_settings(tmp_path), audit=audit, graph=graph
+    )
+
+    response = await service.ask(make_request())
+
+    assert response.session_id == "s-1"
+    assert "缩小" in response.answer
+    assert audit.failed_errors == []
+    # _raising_invoke replaces FakeGraph.ainvoke, so no "graph:invoke" event.
+    assert events == [
+        "lease:acquire",
+        "audit:start_request",
+        "audit:succeed_request",
+        "lease:release",
+    ]
