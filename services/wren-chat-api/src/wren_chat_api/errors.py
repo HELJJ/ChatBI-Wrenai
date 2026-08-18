@@ -37,7 +37,7 @@ class SessionBusy(ChatServiceError):
 class SessionLeaseLost(ChatServiceError):
     code = "SESSION_LEASE_LOST"
     http_status = 409
-    public_message = "会话状态异常（处理权丢失），请重新提问；若持续出现请开启新会话。"
+    public_message = "会话状态异常（处理权丢失），请重新提问或开启新会话。"
 
 
 class QuestionUnanswerable(ChatServiceError):
@@ -55,19 +55,19 @@ class CapacityExceeded(ChatServiceError):
 class PersistenceFailed(ChatServiceError):
     code = "PERSISTENCE_FAILED"
     http_status = 500
-    public_message = "服务状态存储异常，请稍后重试；若持续出现请联系管理员。"
+    public_message = "服务状态存储异常，请稍后重试。"
 
 
 class InternalError(ChatServiceError):
     code = "INTERNAL_ERROR"
     http_status = 500
-    public_message = "服务内部错误，请稍后重试；若持续出现请联系管理员。"
+    public_message = "服务内部错误，请稍后重试。"
 
 
 class UpstreamFailed(ChatServiceError):
     code = "UPSTREAM_FAILED"
     http_status = 502
-    public_message = "上游模型服务异常，请稍后重试；若持续出现请联系管理员。"
+    public_message = "上游模型服务异常，请稍后重试。"
 
 
 class RequestTimedOut(ChatServiceError):

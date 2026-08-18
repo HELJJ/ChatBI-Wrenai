@@ -10,6 +10,8 @@ from uuid import UUID
 
 from langgraph.errors import GraphRecursionError
 from openai import APIError as OpenAIAPIError
+from psycopg import Error as PsycopgError
+from psycopg_pool import PoolTimeout
 
 from wren_chat_api.agent import invoke_chat
 from wren_chat_api.audit import AuditRepository, RequestAlreadyTerminal
@@ -96,10 +98,13 @@ class ChatService:
 
     async def ask(self, request: ChatRequest) -> ChatResponse:
         """Answer one question for one session, or raise a typed error."""
-        lease = await self._leases.acquire(
-            request.session_id,
-            ttl=timedelta(seconds=self._settings.lease_ttl_seconds),
-        )
+        try:
+            lease = await self._leases.acquire(
+                request.session_id,
+                ttl=timedelta(seconds=self._settings.lease_ttl_seconds),
+            )
+        except (PsycopgError, PoolTimeout) as exc:
+            raise PersistenceFailed("lease:acquire", cause=exc) from exc
         if lease is None:
             raise SessionBusy()
 
@@ -157,6 +162,12 @@ class ChatService:
                     exc_info=True,
                 )
                 answer = _CONTEXT_OVERFLOW_ANSWER
+            elif isinstance(exc, (PsycopgError, PoolTimeout)):
+                # State-DB failures: lease renew inside the graph loop or the
+                # LangGraph checkpointer writing checkpoints mid-run.
+                persisted = PersistenceFailed("graph", cause=exc)
+                await self._fail_request_safely(request_id, persisted)
+                raise persisted from exc
             elif isinstance(exc, OpenAIAPIError):
                 upstream = UpstreamFailed(cause=exc)
                 await self._fail_request_safely(request_id, upstream)

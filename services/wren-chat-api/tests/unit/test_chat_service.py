@@ -1,6 +1,7 @@
 """Unit contracts for chat request orchestration."""
 
 import asyncio
+import inspect
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -9,11 +10,14 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.errors import GraphRecursionError
 from openai import APIConnectionError
+from psycopg import OperationalError
 
+from wren_chat_api import errors as errors_module
 from wren_chat_api.chat import ChatService
 from wren_chat_api.config import Settings
 from wren_chat_api.contracts import ChatRequest
 from wren_chat_api.errors import (
+    ChatServiceError,
     PersistenceFailed,
     RequestTimedOut,
     SessionBusy,
@@ -53,8 +57,7 @@ class FakeLeases:
             lease = Lease(
                 session_id="s-1",
                 lease_id=uuid4(),
-                expires_at=datetime.now(timezone.utc)
-                + timedelta(seconds=30),
+                expires_at=datetime.now(timezone.utc) + timedelta(seconds=30),
             )
         self.lease = lease  # type: ignore[assignment]
         self.renew_result = renew_result
@@ -168,9 +171,7 @@ async def test_success_is_returned_only_after_audit_is_terminal(tmp_path):
 async def test_audit_failure_prevents_success_response(tmp_path):
     events: list[str] = []
     audit = FakeAudit(events, succeed_error=RuntimeError("postgres down"))
-    service = make_service(
-        events, make_settings(tmp_path), audit=audit
-    )
+    service = make_service(events, make_settings(tmp_path), audit=audit)
 
     with pytest.raises(PersistenceFailed):
         await service.ask(make_request())
@@ -183,9 +184,7 @@ async def test_busy_session_does_not_create_audit_request(tmp_path):
     events: list[str] = []
     leases = FakeLeases(events, lease=None)
     audit = FakeAudit(events)
-    service = make_service(
-        events, make_settings(tmp_path), leases=leases, audit=audit
-    )
+    service = make_service(events, make_settings(tmp_path), leases=leases, audit=audit)
 
     with pytest.raises(SessionBusy):
         await service.ask(make_request())
@@ -199,9 +198,7 @@ async def test_graph_failure_is_recorded_and_re_raised(tmp_path):
     graph = FakeGraph(events)
     graph.ainvoke = _raising_invoke(RuntimeError("model exploded"))
     audit = FakeAudit(events)
-    service = make_service(
-        events, make_settings(tmp_path), audit=audit, graph=graph
-    )
+    service = make_service(events, make_settings(tmp_path), audit=audit, graph=graph)
 
     with pytest.raises(RuntimeError, match="model exploded"):
         await service.ask(make_request())
@@ -217,9 +214,7 @@ async def test_failure_persistence_failure_raises_persistence_failed(tmp_path):
     graph = FakeGraph(events)
     graph.ainvoke = _raising_invoke(RuntimeError("model exploded"))
     audit = FakeAudit(events, fail_error=RuntimeError("audit also down"))
-    service = make_service(
-        events, make_settings(tmp_path), audit=audit, graph=graph
-    )
+    service = make_service(events, make_settings(tmp_path), audit=audit, graph=graph)
 
     with pytest.raises(PersistenceFailed):
         await service.ask(make_request())
@@ -265,9 +260,7 @@ async def test_recursion_limit_returns_graceful_answer_not_500(tmp_path):
         GraphRecursionError("Recursion limit of 300 reached")
     )
     audit = FakeAudit(events)
-    service = make_service(
-        events, make_settings(tmp_path), audit=audit, graph=graph
-    )
+    service = make_service(events, make_settings(tmp_path), audit=audit, graph=graph)
 
     response = await service.ask(make_request())
 
@@ -298,9 +291,7 @@ async def test_context_overflow_returns_graceful_answer_with_new_session_hint(
         )
     )
     audit = FakeAudit(events)
-    service = make_service(
-        events, make_settings(tmp_path), audit=audit, graph=graph
-    )
+    service = make_service(events, make_settings(tmp_path), audit=audit, graph=graph)
 
     response = await service.ask(make_request())
 
@@ -322,9 +313,7 @@ async def test_request_timeout_maps_to_504_typed_error(tmp_path):
     graph = FakeGraph(events)
     graph.ainvoke = _raising_invoke(TimeoutError("cancel scope timed out"))
     audit = FakeAudit(events)
-    service = make_service(
-        events, make_settings(tmp_path), audit=audit, graph=graph
-    )
+    service = make_service(events, make_settings(tmp_path), audit=audit, graph=graph)
 
     with pytest.raises(RequestTimedOut):
         await service.ask(make_request())
@@ -341,18 +330,81 @@ async def test_model_endpoint_failure_maps_to_502_upstream_failed(tmp_path):
     graph = FakeGraph(events)
     graph.ainvoke = _raising_invoke(
         APIConnectionError(
-            request=httpx.Request(
-                "POST", "https://maas.example/v1/chat/completions"
-            )
+            request=httpx.Request("POST", "https://maas.example/v1/chat/completions")
         )
     )
     audit = FakeAudit(events)
-    service = make_service(
-        events, make_settings(tmp_path), audit=audit, graph=graph
-    )
+    service = make_service(events, make_settings(tmp_path), audit=audit, graph=graph)
 
     with pytest.raises(UpstreamFailed):
         await service.ask(make_request())
 
     assert len(audit.failed_errors) == 1
     assert audit.failed_errors[0]["code"] == "UPSTREAM_FAILED"
+
+
+async def test_state_db_failure_inside_graph_maps_to_persistence_failed(
+    tmp_path,
+):
+    """Raw psycopg errors from the lease renew loop or the LangGraph
+    checkpointer must surface as PERSISTENCE_FAILED (500, state store),
+    not INTERNAL_ERROR."""
+    events: list[str] = []
+    graph = FakeGraph(events)
+    graph.ainvoke = _raising_invoke(OperationalError("connection reset by peer"))
+    audit = FakeAudit(events)
+    service = make_service(events, make_settings(tmp_path), audit=audit, graph=graph)
+
+    with pytest.raises(PersistenceFailed):
+        await service.ask(make_request())
+
+    assert len(audit.failed_errors) == 1
+    assert audit.failed_errors[0]["code"] == "PERSISTENCE_FAILED"
+
+
+async def test_state_db_failure_on_lease_acquire_maps_to_persistence_failed(
+    tmp_path,
+):
+    """Lease acquisition happens before the audit request is created; a state
+    DB failure there must still map to PERSISTENCE_FAILED, not 500 generic."""
+
+    class FailingLeases:
+        async def acquire(self, session_id, *, ttl):
+            raise OperationalError("pool is closed")
+
+        async def renew(self, lease, *, ttl):
+            return True
+
+        async def release(self, lease):
+            return True
+
+    events: list[str] = []
+    audit = FakeAudit(events)
+    service = make_service(
+        events,
+        make_settings(tmp_path),
+        leases=FailingLeases(),
+        audit=audit,
+    )
+
+    with pytest.raises(PersistenceFailed):
+        await service.ask(make_request())
+
+    assert audit.start_calls == 0
+
+
+def test_public_error_messages_stay_actionable_without_admin_referral():
+    """Public messages must not contain filler like "若持续出现请联系管理员";
+    every message should tell the user what to do, per NN/g guidance."""
+    concrete_errors = [
+        error_class
+        for _, error_class in inspect.getmembers(errors_module, inspect.isclass)
+        if issubclass(error_class, ChatServiceError)
+        and error_class is not ChatServiceError
+    ]
+
+    assert len(concrete_errors) >= 12
+    for error_class in concrete_errors:
+        assert "管理员" not in error_class.public_message
+        assert "若持续出现" not in error_class.public_message
+        assert error_class.public_message.strip().endswith(("。", "？"))
