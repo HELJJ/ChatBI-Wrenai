@@ -81,8 +81,8 @@ _CONTINUATION_PROMPT = (
 
 # Salvage fallbacks: when every continuation round still ends at the token
 # limit, return the fully generated risk items instead of failing the request
-# (field-observed gateways cut generation mid-string).
-_SALVAGED_SUMMARY = "分析因模型输出长度限制被部分截断，以上为已识别出的风险项。"
+# (field-observed gateways cut generation mid-string). Missing fields are
+# derived or omitted — placeholder text is never fabricated.
 _SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 _RANK_TO_LEVEL = {1: "low", 2: "medium", 3: "high", 4: "critical"}
 
@@ -172,7 +172,6 @@ def _salvage_analysis(text: str) -> SecurityAnalysis:
     data.setdefault("server_info", {})
     if data.get("risk_level") not in get_args(RiskLevel):
         data["risk_level"] = _derive_risk_level(items)
-    data.setdefault("summary", _SALVAGED_SUMMARY)
     return SecurityAnalysis.model_validate(data)
 
 

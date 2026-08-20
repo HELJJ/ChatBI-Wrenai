@@ -289,9 +289,7 @@ async def test_analyze_salvages_when_continuations_exhausted(tmp_path):
     assert response.partial is True
     assert response.risk_level == "high"
     assert [item.check_item for item in response.risk_items] == ["密码有效期"]
-    assert (
-        response.summary == "分析因模型输出长度限制被部分截断，以上为已识别出的风险项。"
-    )
+    assert response.summary is None  # no placeholder text fabricated
 
 
 async def test_analyze_salvages_immediately_when_continuations_disabled(
@@ -366,9 +364,7 @@ def test_salvage_derives_risk_level_from_items():
 
     assert salvaged.risk_level == "critical"
     assert len(salvaged.risk_items) == 1
-    assert (
-        salvaged.summary == "分析因模型输出长度限制被部分截断，以上为已识别出的风险项。"
-    )
+    assert salvaged.summary is None
 
 
 def test_salvage_maps_info_only_items_to_low_level():

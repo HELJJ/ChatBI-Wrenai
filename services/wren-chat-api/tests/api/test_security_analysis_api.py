@@ -42,14 +42,21 @@ _SAMPLE_ANALYSIS = SecurityAnalysisResponse(
 
 
 class FakeAnalysisService:
-    def __init__(self, error: Exception | None = None):
+    def __init__(
+        self,
+        error: Exception | None = None,
+        result: SecurityAnalysisResponse | None = None,
+    ):
         self.error = error
+        self.result = result
         self.calls: list[tuple[str, str]] = []
 
     async def analyze(self, filename: str, content: str) -> SecurityAnalysisResponse:
         self.calls.append((filename, content))
         if self.error is not None:
             raise self.error
+        if self.result is not None:
+            return self.result.model_copy(update={"filename": filename})
         return _SAMPLE_ANALYSIS.model_copy(update={"filename": filename})
 
 
@@ -130,6 +137,27 @@ async def test_analysis_service_receives_validated_content(tmp_path, sample_repo
     filename, content = service.calls[0]
     assert filename == "report.md"
     assert "等保2.0 服务器安全检查报告" in content
+
+
+async def test_missing_summary_is_omitted_not_placeholder(tmp_path, sample_report):
+    # A salvaged partial result whose summary was never generated must omit
+    # the field entirely (exclude_none), never show placeholder text.
+    service = FakeAnalysisService(
+        result=_SAMPLE_ANALYSIS.model_copy(update={"summary": None, "partial": True})
+    )
+    app = create_app(make_settings(tmp_path), overrides={"analysis_service": service})
+    async with client_for(app) as client:
+        response = await client.post(
+            "/v1/security-report/analysis",
+            headers={"Authorization": "Bearer test-key"},
+            files=upload(sample_report),
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "summary" not in body
+    assert body["partial"] is True
+    assert "截断" not in response.text
 
 
 async def test_wrong_api_key_returns_401(tmp_path, sample_report):

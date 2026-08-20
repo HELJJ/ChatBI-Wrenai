@@ -122,6 +122,7 @@ def create_app(
     @app.post(
         "/v1/security-report/analysis",
         response_model=SecurityAnalysisResponse,
+        response_model_exclude_none=True,
         dependencies=[Depends(auth)],
     )
     async def analyze_security_report(

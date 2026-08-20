@@ -108,7 +108,9 @@ class SecurityAnalysis(StrictModel):
     server_info: ServerInfo = Field(default_factory=ServerInfo)
     risk_level: RiskLevel
     risk_items: list[RiskItem] = Field(default_factory=list)
-    summary: str = Field(min_length=1)
+    # None when a truncated output was salvaged before the model generated
+    # its summary; no placeholder text is fabricated.
+    summary: str | None = Field(default=None, min_length=1)
 
 
 class SecurityAnalysisResponse(StrictModel):
@@ -118,7 +120,7 @@ class SecurityAnalysisResponse(StrictModel):
     server_info: ServerInfo
     risk_level: RiskLevel
     risk_items: list[RiskItem]
-    summary: str
+    summary: str | None = None
     # True when the model output hit the token limit and only the fully
     # generated risk items were recovered; the last, truncated item is
     # dropped and missing fields fall back to derived values.
