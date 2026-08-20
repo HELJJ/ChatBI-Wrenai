@@ -52,6 +52,7 @@ def test_settings_use_confirmed_defaults(tmp_path: Path) -> None:
     assert settings.recovery_interval_seconds == 30
     assert settings.max_report_bytes == 1_048_576
     assert settings.analysis_timeout_seconds == 120
+    assert settings.analysis_max_tokens == 8_192
 
 
 def test_environment_uses_state_database_name(monkeypatch, tmp_path: Path) -> None:

@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     max_report_bytes: int = Field(default=1_048_576, ge=1_024, le=10_485_760)
     # One LLM pass over a single report; far below the multi-round chat budget.
     analysis_timeout_seconds: int = Field(default=120, ge=1, le=600)
+    # Output ceiling for one analysis pass. The observed MaaS gateway silently
+    # truncated generation at 5120 tokens (finish_reason=length) mid-JSON
+    # because no explicit max_tokens was sent, so set one explicitly.
+    analysis_max_tokens: int = Field(default=8_192, ge=1_024, le=32_768)
 
     @field_validator("state_database_url")
     @classmethod

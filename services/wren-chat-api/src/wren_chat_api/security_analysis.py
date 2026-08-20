@@ -51,6 +51,10 @@ recommendation（整改建议，尽量给出具体的配置文件路径或命令
 （info 不计入）；没有风险项时为 "low"。
 4. summary：用中文简要总结整体安全状况，并给出整改优先级建议。
 
+输出必须完整，严格控制篇幅以防被截断：risk_items 按严重度从高到低\
+排序，最多 12 项（超出时只保留最严重的）；每项的 risk_description 与 \
+recommendation 各不超过 80 字；summary 不超过 120 字。
+
 严格只输出一个 JSON 对象：不要使用 Markdown 代码围栏，\
 不要输出任何解释性文字。JSON 结构如下：
 {"server_info": {"hostname": 字符串或null, "os": 字符串或null, \
@@ -98,7 +102,10 @@ class AnalysisService:
     """Analyze one uploaded server report with the configured LLM."""
 
     def __init__(self, *, model: Any, settings: Settings) -> None:
-        self._model = model
+        # Explicit output ceiling: some OpenAI-compatible gateways silently
+        # truncate at their own default (observed: 5120 tokens) when the
+        # request omits max_tokens, cutting the JSON mid-string.
+        self._model = model.bind(max_tokens=settings.analysis_max_tokens)
         self._settings = settings
 
     async def analyze(self, filename: str, content: str) -> SecurityAnalysisResponse:
@@ -116,6 +123,17 @@ class AnalysisService:
             raise RequestTimedOut(cause=exc) from exc
         except OpenAIAPIError as exc:
             raise UpstreamFailed(cause=exc) from exc
+
+        if response.response_metadata.get("finish_reason") == "length":
+            logger.warning(
+                "security analysis truncated at the model token limit "
+                "(max_tokens=%s); raise WREN_CHAT_ANALYSIS_MAX_TOKENS",
+                self._settings.analysis_max_tokens,
+            )
+            raise InvalidAnalysisResult(
+                "output truncated by model token limit "
+                f"(max_tokens={self._settings.analysis_max_tokens})"
+            )
 
         try:
             analysis = SecurityAnalysis.model_validate(

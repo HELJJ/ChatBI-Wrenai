@@ -58,11 +58,24 @@ def make_settings(tmp_path, **overrides) -> Settings:
 
 
 class FakeModel:
-    def __init__(self, *, content: str = "", delay: float = 0, error=None):
+    def __init__(
+        self,
+        *,
+        content: str = "",
+        delay: float = 0,
+        error=None,
+        response_metadata: dict | None = None,
+    ):
         self.content = content
         self.delay = delay
         self.error = error
+        self.response_metadata = response_metadata or {}
         self.calls = []
+        self.bound_kwargs: dict = {}
+
+    def bind(self, **kwargs):
+        self.bound_kwargs = kwargs
+        return self
 
     async def ainvoke(self, messages):
         self.calls.append(messages)
@@ -70,7 +83,10 @@ class FakeModel:
             await asyncio.sleep(self.delay)
         if self.error is not None:
             raise self.error
-        return AIMessage(content=self.content)
+        return AIMessage(
+            content=self.content,
+            response_metadata=self.response_metadata,
+        )
 
 
 # --- validate_report -------------------------------------------------------
@@ -226,6 +242,42 @@ async def test_analyze_non_json_output_maps_to_invalid_analysis_result(tmp_path)
 
     with pytest.raises(InvalidAnalysisResult):
         await service.analyze("report.md", _VALID_CONTENT)
+
+
+async def test_analyze_truncated_json_maps_to_invalid_analysis_result(tmp_path):
+    # Field-accurate reproduction of the observed gateway failure: generation
+    # cut mid-string at 5120 tokens leaves an unterminated JSON document.
+    truncated = (
+        '{"server_info": {"hostname": "localhost", "os": "Kylin V10", '
+        '"kernel": "4.19.90"}, "risk_level": "high", "risk_items": '
+        '[{"check_item": "密码有效期", "severity": "high"'
+    )
+    model = FakeModel(content=truncated)
+    service = make_service(tmp_path, model)
+
+    with pytest.raises(InvalidAnalysisResult):
+        await service.analyze("report.md", _VALID_CONTENT)
+
+
+async def test_analyze_reports_length_truncation(tmp_path):
+    model = FakeModel(
+        content='{"risk_level": "high", "risk_ite',
+        response_metadata={"finish_reason": "length"},
+    )
+    service = make_service(tmp_path, model)
+
+    with pytest.raises(InvalidAnalysisResult) as excinfo:
+        await service.analyze("report.md", _VALID_CONTENT)
+
+    assert "truncated" in (excinfo.value.internal_message or "")
+
+
+def test_analysis_service_binds_explicit_max_tokens(tmp_path):
+    model = FakeModel()
+    settings = make_settings(tmp_path, analysis_max_tokens=4096)
+    AnalysisService(model=model, settings=settings)
+
+    assert model.bound_kwargs == {"max_tokens": 4096}
 
 
 async def test_analyze_schema_violation_maps_to_invalid_analysis_result(tmp_path):
