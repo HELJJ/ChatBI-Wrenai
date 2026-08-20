@@ -1,6 +1,6 @@
 """Strict public API and internal audit data contracts."""
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints
 
@@ -18,6 +18,10 @@ SessionId = Annotated[
         max_length=128,
         pattern=r"^[A-Za-z0-9._:-]+$",
     ),
+]
+Filename = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=255),
 ]
 Question = Annotated[
     str,
@@ -74,3 +78,44 @@ class AttemptResult(StrictModel):
 
     columns: list[str]
     rows: list[dict[str, JsonValue]]
+
+
+Severity = Literal["critical", "high", "medium", "low", "info"]
+RiskLevel = Literal["critical", "high", "medium", "low"]
+
+
+class ServerInfo(StrictModel):
+    """Server identity fields extracted from the uploaded report."""
+
+    hostname: str | None = None
+    os: str | None = None
+    kernel: str | None = None
+
+
+class RiskItem(StrictModel):
+    """One finding the model flags for remediation."""
+
+    check_item: str = Field(min_length=1)
+    severity: Severity
+    current_status: str = Field(min_length=1)
+    risk_description: str = Field(min_length=1)
+    recommendation: str = Field(min_length=1)
+
+
+class SecurityAnalysis(StrictModel):
+    """Parsed model output for one analyzed server report."""
+
+    server_info: ServerInfo = Field(default_factory=ServerInfo)
+    risk_level: RiskLevel
+    risk_items: list[RiskItem] = Field(default_factory=list)
+    summary: str = Field(min_length=1)
+
+
+class SecurityAnalysisResponse(StrictModel):
+    """Public success response of the security-report analysis endpoint."""
+
+    filename: Filename
+    server_info: ServerInfo
+    risk_level: RiskLevel
+    risk_items: list[RiskItem]
+    summary: str

@@ -1,0 +1,133 @@
+"""LLM-backed security analysis of uploaded server check reports."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from pathlib import Path
+from typing import Any
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from openai import APIError as OpenAIAPIError
+from pydantic import ValidationError
+
+from wren_chat_api.config import Settings
+from wren_chat_api.contracts import SecurityAnalysis, SecurityAnalysisResponse
+from wren_chat_api.errors import (
+    InvalidAnalysisResult,
+    InvalidReportFile,
+    ReportTooLarge,
+    RequestTimedOut,
+    UpstreamFailed,
+)
+
+logger = logging.getLogger(__name__)
+
+_ALLOWED_SUFFIXES = frozenset({".md", ".markdown"})
+
+# Structured output is requested via the prompt and parsed locally instead of
+# with_structured_output(): every OpenAI-compatible endpoint reliably returns
+# plain text, while function-calling support varies across MaaS providers.
+_SYSTEM_PROMPT = """\
+你是一名资深的 Linux 服务器安全专家，熟悉 GB/T 22239-2019\
+（网络安全等级保护基本要求，等保 2.0）。
+
+用户会提供一份 Markdown 格式的服务器安全检查报告。请分析该报告并输出\
+风险评估结果，要求：
+
+1. server_info：提取报告中的主机名（hostname）、操作系统（os）、\
+内核版本（kernel）；报告中没有的字段填 null。
+2. risk_items：列出所有需要关注或整改的风险项：
+   - 每个 FAIL 项都必须列为风险项；
+   - INFO 项，以及报告未覆盖但结合系统信息（操作系统、内核版本等）\
+值得警惕的问题，也应列出；
+   - PASS 项不要列出；
+   - 每个风险项包含：check_item（检查项名称）、severity（严重度）、\
+current_status（当前状态，引用报告中的原始数值）、\
+risk_description（风险说明，说明不整改可能带来的后果）、\
+recommendation（整改建议，尽量给出具体的配置文件路径或命令）。
+3. risk_level：总体风险等级，取所有风险项中的最高严重度\
+（info 不计入）；没有风险项时为 "low"。
+4. summary：用中文简要总结整体安全状况，并给出整改优先级建议。
+
+严格只输出一个 JSON 对象：不要使用 Markdown 代码围栏，\
+不要输出任何解释性文字。JSON 结构如下：
+{"server_info": {"hostname": 字符串或null, "os": 字符串或null, \
+"kernel": 字符串或null},\
+ "risk_level": "critical"|"high"|"medium"|"low",\
+ "risk_items": [{"check_item": 字符串, \
+"severity": "critical"|"high"|"medium"|"low"|"info", \
+"current_status": 字符串, "risk_description": 字符串, \
+"recommendation": 字符串}],\
+ "summary": 字符串}
+
+所有字符串内容使用中文（server_info 保留报告原文）。"""
+
+
+def validate_report(filename: str | None, raw: bytes, max_bytes: int) -> str:
+    """Validate one uploaded report and return its decoded markdown content."""
+    if filename is None or Path(filename).suffix.lower() not in _ALLOWED_SUFFIXES:
+        raise InvalidReportFile("filename")
+    if len(raw) > max_bytes:
+        raise ReportTooLarge(f"{len(raw)} bytes exceeds {max_bytes}")
+    try:
+        content = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise InvalidReportFile("utf-8 decode", cause=exc) from exc
+    if not content.strip():
+        raise InvalidReportFile("empty content")
+    return content
+
+
+def _display_filename(filename: str) -> str:
+    """Reduce an upload filename to its basename before echoing it back."""
+    return filename.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _extract_json(text: str) -> dict[str, Any]:
+    """Parse the JSON object in a model response, tolerating code fences."""
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end < start:
+        raise ValueError("no JSON object found in model response")
+    return json.loads(text[start : end + 1])
+
+
+class AnalysisService:
+    """Analyze one uploaded server report with the configured LLM."""
+
+    def __init__(self, *, model: Any, settings: Settings) -> None:
+        self._model = model
+        self._settings = settings
+
+    async def analyze(self, filename: str, content: str) -> SecurityAnalysisResponse:
+        """Run the LLM analysis of one report, or raise a typed error."""
+        messages = [
+            SystemMessage(content=_SYSTEM_PROMPT),
+            HumanMessage(content=content),
+        ]
+        try:
+            response = await asyncio.wait_for(
+                self._model.ainvoke(messages),
+                timeout=self._settings.analysis_timeout_seconds,
+            )
+        except TimeoutError as exc:
+            raise RequestTimedOut(cause=exc) from exc
+        except OpenAIAPIError as exc:
+            raise UpstreamFailed(cause=exc) from exc
+
+        try:
+            analysis = SecurityAnalysis.model_validate(
+                _extract_json(str(response.content))
+            )
+        except (ValueError, ValidationError) as exc:
+            logger.warning(
+                "security analysis output failed validation",
+                exc_info=True,
+            )
+            raise InvalidAnalysisResult(cause=exc) from exc
+        return SecurityAnalysisResponse(
+            filename=_display_filename(filename),
+            **analysis.model_dump(),
+        )

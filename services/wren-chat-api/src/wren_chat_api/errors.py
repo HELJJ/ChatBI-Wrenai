@@ -92,3 +92,24 @@ class InvalidFinalAnswer(ChatServiceError):
     code = "INVALID_FINAL_ANSWER"
     http_status = 502
     public_message = "模型未能生成有效回答，请重试或换种问法。"
+
+
+class InvalidReportFile(ChatServiceError):
+    code = "INVALID_REPORT_FILE"
+    http_status = 422
+    public_message = (
+        "上传的文件不是有效的 Markdown 检查报告：需 .md/.markdown 扩展名、"
+        "UTF-8 编码且内容非空，请检查后重新上传。"
+    )
+
+
+class ReportTooLarge(ChatServiceError):
+    code = "REPORT_TOO_LARGE"
+    http_status = 413
+    public_message = "上传的报告文件超过大小限制，请精简报告内容后重试。"
+
+
+class InvalidAnalysisResult(ChatServiceError):
+    code = "INVALID_ANALYSIS_RESULT"
+    http_status = 502
+    public_message = "模型未能生成有效的分析结果，请重试。"

@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any, TypedDict
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, File, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -23,6 +23,7 @@ from wren_chat_api.contracts import (
     ChatResponse,
     ErrorBody,
     ErrorResponse,
+    SecurityAnalysisResponse,
 )
 from wren_chat_api.db import (
     apply_migrations,
@@ -39,18 +40,24 @@ from wren_chat_api.metrics import (
     metrics_response,
 )
 from wren_chat_api.recovery import run_recovery_loop
+from wren_chat_api.security_analysis import AnalysisService, validate_report
 
 logger = logging.getLogger(__name__)
 
 _INVALID_REQUEST_MESSAGE = (
     "请求参数不合法，请检查会话 ID 与问题内容（问题不超过 4000 字符）。"
 )
+_ANALYSIS_INVALID_REQUEST_MESSAGE = (
+    "请求参数不合法，请以 multipart/form-data 上传名为 file 的 .md 报告文件。"
+)
+_GENERIC_INVALID_REQUEST_MESSAGE = "请求参数不合法，请检查请求内容。"
 
 
 class AppOverrides(TypedDict, total=False):
     """Test seams replacing production wiring inside create_app."""
 
     chat_service: Any
+    analysis_service: Any
     readiness: Callable[[], Awaitable[None]]
 
 
@@ -65,18 +72,25 @@ def create_app(
 
     lifespan = (
         None
-        if "chat_service" in overrides
+        if "chat_service" in overrides or "analysis_service" in overrides
         else _production_lifespan(resolved_settings)
     )
     app = FastAPI(title="Wren Chat API", version="0.1.0", lifespan=lifespan)
     app.state.settings = resolved_settings
     app.state.chat_service = overrides.get("chat_service")
+    app.state.analysis_service = overrides.get("analysis_service")
     app.state.readiness = overrides.get("readiness") or _default_readiness
 
     def get_chat_service(request: Request) -> Any:
         service = request.app.state.chat_service
         if service is None:
             raise RuntimeError("chat service not initialized")
+        return service
+
+    def get_analysis_service(request: Request) -> Any:
+        service = request.app.state.analysis_service
+        if service is None:
+            raise RuntimeError("analysis service not initialized")
         return service
 
     @app.post(
@@ -100,6 +114,35 @@ def create_app(
                 # Starlette re-raises from Exception-keyed handlers, so map
                 # them to a typed error instead of a catch-all handler.
                 logger.error("unhandled chat error", exc_info=True)
+                REQUESTS.labels(route=route, status="500").inc()
+                raise InternalError(cause=exc) from exc
+        REQUESTS.labels(route=route, status="200").inc()
+        return response
+
+    @app.post(
+        "/v1/security-report/analysis",
+        response_model=SecurityAnalysisResponse,
+        dependencies=[Depends(auth)],
+    )
+    async def analyze_security_report(
+        file: UploadFile = File(...),
+        service: Any = Depends(get_analysis_service),
+    ) -> SecurityAnalysisResponse:
+        route = "/v1/security-report/analysis"
+        with REQUEST_LATENCY.labels(route=route).time():
+            try:
+                raw = await file.read()
+                content = validate_report(
+                    file.filename,
+                    raw,
+                    resolved_settings.max_report_bytes,
+                )
+                response = await service.analyze(file.filename, content)
+            except ChatServiceError as exc:
+                REQUESTS.labels(route=route, status=str(exc.http_status)).inc()
+                raise
+            except Exception as exc:
+                logger.error("unhandled analysis error", exc_info=True)
                 REQUESTS.labels(route=route, status="500").inc()
                 raise InternalError(cause=exc) from exc
         REQUESTS.labels(route=route, status="200").inc()
@@ -147,12 +190,19 @@ def create_app(
         request: Request,
         exc: RequestValidationError,
     ) -> JSONResponse:
+        messages_by_path = {
+            "/v1/chat": _INVALID_REQUEST_MESSAGE,
+            "/v1/security-report/analysis": _ANALYSIS_INVALID_REQUEST_MESSAGE,
+        }
         return JSONResponse(
             status_code=400,
             content=ErrorResponse(
                 error=ErrorBody(
                     code="INVALID_REQUEST",
-                    message=_INVALID_REQUEST_MESSAGE,
+                    message=messages_by_path.get(
+                        request.url.path,
+                        _GENERIC_INVALID_REQUEST_MESSAGE,
+                    ),
                 )
             ).model_dump(),
         )
@@ -247,6 +297,7 @@ def _production_lifespan(settings: Settings) -> Callable[[FastAPI], Any]:
             audited_query=audited_query,
             settings=settings,
         )
+        analysis_service = AnalysisService(model=model, settings=settings)
 
         async def readiness() -> None:
             async with app_pool.connection() as conn:
@@ -263,6 +314,7 @@ def _production_lifespan(settings: Settings) -> Callable[[FastAPI], Any]:
         )
 
         app.state.chat_service = chat_service
+        app.state.analysis_service = analysis_service
         app.state.readiness = readiness
         logger.info("wren chat api started")
         try:

@@ -9,6 +9,7 @@ description = "Session-isolated business-data chat API powered by Wren"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",
+  "python-multipart>=0.0.20",
   "uvicorn[standard]>=0.30",
   "pydantic>=2.10",
   "pydantic-settings>=2.7",

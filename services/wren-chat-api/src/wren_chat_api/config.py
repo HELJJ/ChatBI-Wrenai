@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     wren_workers: int = Field(default=16, ge=1)
     wren_queue_capacity: int = Field(default=32, ge=0)
     recovery_interval_seconds: int = Field(default=30, ge=1)
+    # Upload gate for the security-report analysis endpoint: markdown check
+    # reports are small, so 1 MiB is generous while capping abuse.
+    max_report_bytes: int = Field(default=1_048_576, ge=1_024, le=10_485_760)
+    # One LLM pass over a single report; far below the multi-round chat budget.
+    analysis_timeout_seconds: int = Field(default=120, ge=1, le=600)
 
     @field_validator("state_database_url")
     @classmethod
