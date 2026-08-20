@@ -119,3 +119,7 @@ class SecurityAnalysisResponse(StrictModel):
     risk_level: RiskLevel
     risk_items: list[RiskItem]
     summary: str
+    # True when the model output hit the token limit and only the fully
+    # generated risk items were recovered; the last, truncated item is
+    # dropped and missing fields fall back to derived values.
+    partial: bool = False

@@ -105,7 +105,9 @@ async def test_analysis_success_returns_structured_result(tmp_path, sample_repor
         "risk_level",
         "risk_items",
         "summary",
+        "partial",
     }
+    assert body["partial"] is False
     assert body["filename"] == "etc_detect_report_sample.md"
     assert body["risk_level"] == "high"
     assert body["server_info"]["os"] == "Kylin Linux Advanced Server V10 (Lance)"

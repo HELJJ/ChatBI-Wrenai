@@ -43,6 +43,11 @@ PERSISTENCE_FAILURES = Counter(
     "wren_chat_persistence_failures_total",
     "Audit persistence failures raised as PersistenceFailed.",
 )
+ANALYSIS_TRUNCATIONS = Counter(
+    "wren_chat_analysis_truncations_total",
+    "Security analyses that hit the model token limit, by handling outcome.",
+    ["outcome"],
+)
 
 
 def metrics_response() -> Response:

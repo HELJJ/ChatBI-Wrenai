@@ -6,14 +6,18 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from openai import APIError as OpenAIAPIError
 from pydantic import ValidationError
 
 from wren_chat_api.config import Settings
-from wren_chat_api.contracts import SecurityAnalysis, SecurityAnalysisResponse
+from wren_chat_api.contracts import (
+    RiskLevel,
+    SecurityAnalysis,
+    SecurityAnalysisResponse,
+)
 from wren_chat_api.errors import (
     InvalidAnalysisResult,
     InvalidReportFile,
@@ -21,6 +25,7 @@ from wren_chat_api.errors import (
     RequestTimedOut,
     UpstreamFailed,
 )
+from wren_chat_api.metrics import ANALYSIS_TRUNCATIONS
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +73,19 @@ recommendation 各不超过 80 字；summary 不超过 120 字。
 
 所有字符串内容使用中文（server_info 保留报告原文）。"""
 
+_CONTINUATION_PROMPT = (
+    "你的输出因达到 token 上限被截断。请从中断处的下一个字符继续输出剩余的"
+    "JSON：不要重复已输出的任何内容，不要添加任何解释，"
+    "直到整个 JSON 对象完整结束。"
+)
+
+# Salvage fallbacks: when every continuation round still ends at the token
+# limit, return the fully generated risk items instead of failing the request
+# (field-observed gateways cut generation mid-string).
+_SALVAGED_SUMMARY = "分析因模型输出长度限制被部分截断，以上为已识别出的风险项。"
+_SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+_RANK_TO_LEVEL = {1: "low", 2: "medium", 3: "high", 4: "critical"}
+
 
 def validate_report(filename: str | None, raw: bytes, max_bytes: int) -> str:
     """Validate one uploaded report and return its decoded markdown content."""
@@ -98,8 +116,74 @@ def _extract_json(text: str) -> dict[str, Any]:
     return json.loads(text[start : end + 1])
 
 
+def _missing_closes(text: str) -> str:
+    """Closing brackets needed to terminate truncated JSON, string-aware."""
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+    for ch in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if stack:
+                stack.pop()
+    return "".join("]" if ch == "[" else "}" for ch in reversed(stack))
+
+
+def _derive_risk_level(items: list[dict[str, Any]]) -> str:
+    """Overall level from item severities; info does not count, so the
+    lowest derivable level is "low"."""
+    best = max(
+        (_SEVERITY_RANK.get(item.get("severity"), 0) for item in items),
+        default=0,
+    )
+    return _RANK_TO_LEVEL.get(best, "low")
+
+
+def _salvage_analysis(text: str) -> SecurityAnalysis:
+    """Recover a partial analysis from truncated JSON, dropping the
+    incomplete trailing risk item and back-filling missing fields."""
+    pos = text.rfind("}")
+    while pos != -1:
+        candidate = text[: pos + 1]
+        try:
+            data = json.loads(candidate + _missing_closes(candidate))
+        except ValueError:
+            # The last "}" sat inside a string value; try the previous one.
+            pos = text.rfind("}", 0, pos)
+            continue
+        break
+    else:
+        raise ValueError("no complete JSON fragment to salvage")
+    if not isinstance(data, dict):
+        raise ValueError("salvaged JSON fragment is not an object")
+
+    items = [item for item in (data.get("risk_items") or []) if isinstance(item, dict)]
+    data["risk_items"] = items
+    data.setdefault("server_info", {})
+    if data.get("risk_level") not in get_args(RiskLevel):
+        data["risk_level"] = _derive_risk_level(items)
+    data.setdefault("summary", _SALVAGED_SUMMARY)
+    return SecurityAnalysis.model_validate(data)
+
+
 class AnalysisService:
-    """Analyze one uploaded server report with the configured LLM."""
+    """Analyze one uploaded server report with the configured LLM.
+
+    Truncation handling (finish_reason=length): each round appends the
+    partial output as an assistant message and asks the model to continue;
+    once continuation rounds are exhausted, the partial output is salvaged
+    into a response marked ``partial`` instead of failing the request.
+    """
 
     def __init__(self, *, model: Any, settings: Settings) -> None:
         # Explicit output ceiling: some OpenAI-compatible gateways silently
@@ -114,8 +198,49 @@ class AnalysisService:
             SystemMessage(content=_SYSTEM_PROMPT),
             HumanMessage(content=content),
         ]
+        parts: list[str] = []
+        rounds = 0
+        while True:
+            response = await self._invoke(messages)
+            parts.append(str(response.content))
+            finish_reason = response.response_metadata.get("finish_reason")
+            if (
+                finish_reason != "length"
+                or rounds >= self._settings.analysis_max_continuations
+            ):
+                break
+            rounds += 1
+            ANALYSIS_TRUNCATIONS.labels(outcome="continued").inc()
+            messages = [
+                *messages,
+                AIMessage(content="".join(parts)),
+                HumanMessage(content=_CONTINUATION_PROMPT),
+            ]
+
+        text = "".join(parts)
+        partial = False
         try:
-            response = await asyncio.wait_for(
+            analysis = SecurityAnalysis.model_validate(_extract_json(text))
+        except (ValueError, ValidationError):
+            logger.warning(
+                "security analysis output failed validation; salvaging partials"
+            )
+            try:
+                analysis = _salvage_analysis(text)
+                partial = True
+                ANALYSIS_TRUNCATIONS.labels(outcome="salvaged").inc()
+            except (ValueError, ValidationError) as exc:
+                ANALYSIS_TRUNCATIONS.labels(outcome="failed").inc()
+                raise InvalidAnalysisResult(cause=exc) from exc
+        return SecurityAnalysisResponse(
+            filename=_display_filename(filename),
+            partial=partial,
+            **analysis.model_dump(),
+        )
+
+    async def _invoke(self, messages: list[Any]) -> Any:
+        try:
+            return await asyncio.wait_for(
                 self._model.ainvoke(messages),
                 timeout=self._settings.analysis_timeout_seconds,
             )
@@ -123,29 +248,3 @@ class AnalysisService:
             raise RequestTimedOut(cause=exc) from exc
         except OpenAIAPIError as exc:
             raise UpstreamFailed(cause=exc) from exc
-
-        if response.response_metadata.get("finish_reason") == "length":
-            logger.warning(
-                "security analysis truncated at the model token limit "
-                "(max_tokens=%s); raise WREN_CHAT_ANALYSIS_MAX_TOKENS",
-                self._settings.analysis_max_tokens,
-            )
-            raise InvalidAnalysisResult(
-                "output truncated by model token limit "
-                f"(max_tokens={self._settings.analysis_max_tokens})"
-            )
-
-        try:
-            analysis = SecurityAnalysis.model_validate(
-                _extract_json(str(response.content))
-            )
-        except (ValueError, ValidationError) as exc:
-            logger.warning(
-                "security analysis output failed validation",
-                exc_info=True,
-            )
-            raise InvalidAnalysisResult(cause=exc) from exc
-        return SecurityAnalysisResponse(
-            filename=_display_filename(filename),
-            **analysis.model_dump(),
-        )

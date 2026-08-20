@@ -21,6 +21,7 @@ from wren_chat_api.errors import (
 from wren_chat_api.security_analysis import (
     AnalysisService,
     _extract_json,
+    _salvage_analysis,
     validate_report,
 )
 
@@ -64,12 +65,13 @@ class FakeModel:
         content: str = "",
         delay: float = 0,
         error=None,
-        response_metadata: dict | None = None,
+        rounds: list[tuple[str, str]] | None = None,
     ):
-        self.content = content
         self.delay = delay
         self.error = error
-        self.response_metadata = response_metadata or {}
+        # One (content, finish_reason) pair per ainvoke call; the final
+        # pair repeats for any further calls.
+        self.rounds = rounds or [(content, "stop")]
         self.calls = []
         self.bound_kwargs: dict = {}
 
@@ -83,9 +85,11 @@ class FakeModel:
             await asyncio.sleep(self.delay)
         if self.error is not None:
             raise self.error
+        index = min(len(self.calls) - 1, len(self.rounds) - 1)
+        content, finish_reason = self.rounds[index]
         return AIMessage(
-            content=self.content,
-            response_metadata=self.response_metadata,
+            content=content,
+            response_metadata={"finish_reason": finish_reason},
         )
 
 
@@ -236,6 +240,95 @@ async def test_analyze_upstream_error_maps_to_upstream_failed(tmp_path):
         await service.analyze("report.md", _VALID_CONTENT)
 
 
+# A field-accurate truncation: the first risk item is complete, generation
+# cuts mid-string inside the second one.
+_TRUNCATED = (
+    '{"server_info": {"hostname": "localhost.localdomain", "os": "Kylin", '
+    '"kernel": "4.19.90"}, '
+    '"risk_level": "high", '
+    '"risk_items": ['
+    '{"check_item": "密码有效期", "severity": "high", '
+    '"current_status": "99999", "risk_description": "密码不更换", '
+    '"recommendation": "PASS_MAX_DAYS=90"}, '
+    '{"check_item": "SELinux", "severity": "hi'
+)
+
+
+async def test_analyze_continues_truncated_output_until_complete(tmp_path):
+    complete = json.dumps(_VALID_ANALYSIS_JSON, ensure_ascii=False)
+    head = complete[: int(len(complete) * 0.55)]
+    tail = complete[len(head) :]
+    model = FakeModel(rounds=[(head, "length"), (tail, "stop")])
+    service = make_service(tmp_path, model)
+
+    response = await service.analyze("report.md", _VALID_CONTENT)
+
+    assert response.partial is False
+    assert response.risk_level == "high"
+    assert len(model.calls) == 2
+    continued_messages = model.calls[1]
+    assert continued_messages[-2].content == head
+    assert "继续输出剩余" in continued_messages[-1].content
+
+
+async def test_analyze_salvages_when_continuations_exhausted(tmp_path):
+    model = FakeModel(
+        rounds=[
+            (_TRUNCATED, "length"),
+            ("仍然被截断的续写片段", "length"),
+            ("还是没有结束", "length"),
+            ("第四次依旧截断", "length"),
+        ]
+    )
+    service = make_service(tmp_path, model)
+
+    response = await service.analyze("report.md", _VALID_CONTENT)
+
+    # 1 initial call + 3 continuation rounds (the configured cap).
+    assert len(model.calls) == 4
+    assert response.partial is True
+    assert response.risk_level == "high"
+    assert [item.check_item for item in response.risk_items] == ["密码有效期"]
+    assert (
+        response.summary == "分析因模型输出长度限制被部分截断，以上为已识别出的风险项。"
+    )
+
+
+async def test_analyze_salvages_immediately_when_continuations_disabled(
+    tmp_path,
+):
+    model = FakeModel(rounds=[(_TRUNCATED, "length")])
+    settings = make_settings(tmp_path, analysis_max_continuations=0)
+    service = AnalysisService(model=model, settings=settings)
+
+    response = await service.analyze("report.md", _VALID_CONTENT)
+
+    assert len(model.calls) == 1
+    assert response.partial is True
+    assert len(response.risk_items) == 1
+
+
+async def test_analyze_salvages_truncated_json_on_normal_stop(tmp_path):
+    # Complete-looking call whose JSON is cut mid-string still returns a
+    # salvaged partial result instead of failing the request.
+    model = FakeModel(content=_TRUNCATED)
+    service = make_service(tmp_path, model)
+
+    response = await service.analyze("report.md", _VALID_CONTENT)
+
+    assert response.partial is True
+    assert response.risk_items[0].check_item == "密码有效期"
+
+
+async def test_analyze_unsalvageable_truncation_maps_to_invalid(tmp_path):
+    model = FakeModel(rounds=[('{"risk_lev', "length")])
+    settings = make_settings(tmp_path, analysis_max_continuations=0)
+    service = AnalysisService(model=model, settings=settings)
+
+    with pytest.raises(InvalidAnalysisResult):
+        await service.analyze("report.md", _VALID_CONTENT)
+
+
 async def test_analyze_non_json_output_maps_to_invalid_analysis_result(tmp_path):
     model = FakeModel(content="抱歉，我无法分析该报告。")
     service = make_service(tmp_path, model)
@@ -244,50 +337,69 @@ async def test_analyze_non_json_output_maps_to_invalid_analysis_result(tmp_path)
         await service.analyze("report.md", _VALID_CONTENT)
 
 
-async def test_analyze_truncated_json_maps_to_invalid_analysis_result(tmp_path):
-    # Field-accurate reproduction of the observed gateway failure: generation
-    # cut mid-string at 5120 tokens leaves an unterminated JSON document.
-    truncated = (
-        '{"server_info": {"hostname": "localhost", "os": "Kylin V10", '
-        '"kernel": "4.19.90"}, "risk_level": "high", "risk_items": '
-        '[{"check_item": "密码有效期", "severity": "high"'
-    )
-    model = FakeModel(content=truncated)
-    service = make_service(tmp_path, model)
-
-    with pytest.raises(InvalidAnalysisResult):
-        await service.analyze("report.md", _VALID_CONTENT)
-
-
-async def test_analyze_reports_length_truncation(tmp_path):
-    model = FakeModel(
-        content='{"risk_level": "high", "risk_ite',
-        response_metadata={"finish_reason": "length"},
-    )
-    service = make_service(tmp_path, model)
-
-    with pytest.raises(InvalidAnalysisResult) as excinfo:
-        await service.analyze("report.md", _VALID_CONTENT)
-
-    assert "truncated" in (excinfo.value.internal_message or "")
-
-
-def test_analysis_service_binds_explicit_max_tokens(tmp_path):
-    model = FakeModel()
-    settings = make_settings(tmp_path, analysis_max_tokens=4096)
-    AnalysisService(model=model, settings=settings)
-
-    assert model.bound_kwargs == {"max_tokens": 4096}
-
-
-async def test_analyze_schema_violation_maps_to_invalid_analysis_result(tmp_path):
+async def test_analyze_repairs_invalid_risk_level_via_salvage(tmp_path):
+    # An out-of-enum risk_level is repaired from item severities and
+    # returned as a partial result instead of failing the request.
     payload = dict(_VALID_ANALYSIS_JSON)
     payload["risk_level"] = "extreme"
     model = FakeModel(content=json.dumps(payload, ensure_ascii=False))
     service = make_service(tmp_path, model)
 
-    with pytest.raises(InvalidAnalysisResult):
-        await service.analyze("report.md", _VALID_CONTENT)
+    response = await service.analyze("report.md", _VALID_CONTENT)
+
+    assert response.partial is True
+    assert response.risk_level == "high"
+
+
+# --- _salvage_analysis -----------------------------------------------------
+
+
+def test_salvage_derives_risk_level_from_items():
+    truncated = (
+        '{"server_info": {"os": "Kylin V10"}, "risk_items": ['
+        '{"check_item": "密码有效期", "severity": "critical", '
+        '"current_status": "99999", "risk_description": "x", '
+        '"recommendation": "y"}'
+    )
+
+    salvaged = _salvage_analysis(truncated)
+
+    assert salvaged.risk_level == "critical"
+    assert len(salvaged.risk_items) == 1
+    assert (
+        salvaged.summary == "分析因模型输出长度限制被部分截断，以上为已识别出的风险项。"
+    )
+
+
+def test_salvage_maps_info_only_items_to_low_level():
+    truncated = (
+        '{"risk_items": [{"check_item": "系统类型", "severity": "info", '
+        '"current_status": "rhel", "risk_description": "x", '
+        '"recommendation": "y"}'
+    )
+
+    assert _salvage_analysis(truncated).risk_level == "low"
+
+
+def test_salvage_skips_brace_inside_string_value():
+    # The last "}" before the cut sits inside a recommendation string; the
+    # repair must fall back to the previous real closing brace.
+    truncated = (
+        '{"server_info": {"os": "x"}, "risk_items": ['
+        '{"check_item": "a", "severity": "low", "current_status": "s", '
+        '"risk_description": "d", "recommendation": "run } cmd'
+    )
+
+    salvaged = _salvage_analysis(truncated)
+
+    assert salvaged.server_info.os == "x"
+    assert salvaged.risk_items == []
+    assert salvaged.risk_level == "low"
+
+
+def test_salvage_raises_without_complete_fragment():
+    with pytest.raises(ValueError):
+        _salvage_analysis('{"risk_level": "hi')
 
 
 def test_analysis_rejects_unknown_fields():

@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     # truncated generation at 5120 tokens (finish_reason=length) mid-JSON
     # because no explicit max_tokens was sent, so set one explicitly.
     analysis_max_tokens: int = Field(default=8_192, ge=1_024, le=32_768)
+    # Continuation rounds appended after a length-truncated response before
+    # falling back to salvaging the partial output.
+    analysis_max_continuations: int = Field(default=3, ge=0, le=5)
 
     @field_validator("state_database_url")
     @classmethod
