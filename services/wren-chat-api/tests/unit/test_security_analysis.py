@@ -33,15 +33,24 @@ _VALID_ANALYSIS_JSON = {
         "os": "Kylin Linux Advanced Server V10",
         "kernel": "4.19.90-52.22.v2207.ky10.x86_64",
     },
-    "risk_level": "high",
+    "risk_level": "高危",
     "risk_items": [
         {
             "check_item": "密码有效期",
-            "severity": "high",
+            "passed": False,
+            "severity": "高危",
             "current_status": "当前为 99999",
             "risk_description": "密码长期不更换，不符合等保要求",
             "recommendation": "将 PASS_MAX_DAYS 设为 90",
-        }
+        },
+        {
+            "check_item": "密码复杂度",
+            "passed": True,
+            "severity": "中危",
+            "current_status": "已配置 minlen=8",
+            "risk_description": "已启用口令复杂度策略，满足等保要求",
+            "recommendation": "保持现有配置，定期复查",
+        },
     ],
     "summary": "存在多项不合规，建议优先整改口令策略。",
 }
@@ -181,11 +190,14 @@ async def test_analyze_returns_structured_response(tmp_path):
     response = await service.analyze(r"C:\upload\etc_detect_report.md", _VALID_CONTENT)
 
     assert response.filename == "etc_detect_report.md"
-    assert response.risk_level == "high"
+    assert response.risk_level == "高危"
     assert response.server_info.hostname == "localhost.localdomain"
-    assert len(response.risk_items) == 1
+    assert len(response.risk_items) == 2
     assert response.risk_items[0].check_item == "密码有效期"
+    assert response.risk_items[0].passed is False
     assert response.risk_items[0].recommendation == "将 PASS_MAX_DAYS 设为 90"
+    assert response.risk_items[1].check_item == "密码复杂度"
+    assert response.risk_items[1].passed is True
     assert response.summary == "存在多项不合规，建议优先整改口令策略。"
 
 
@@ -206,7 +218,7 @@ async def test_analyze_sends_system_prompt_and_report(tmp_path):
 async def test_analyze_allows_report_without_risk_items(tmp_path):
     payload = {
         "server_info": {"hostname": None, "os": None, "kernel": None},
-        "risk_level": "low",
+        "risk_level": "低危",
         "risk_items": [],
         "summary": "全部合规。",
     }
@@ -216,7 +228,7 @@ async def test_analyze_allows_report_without_risk_items(tmp_path):
     response = await service.analyze("report.md", _VALID_CONTENT)
 
     assert response.risk_items == []
-    assert response.risk_level == "low"
+    assert response.risk_level == "低危"
 
 
 async def test_analyze_timeout_maps_to_request_timed_out(tmp_path):
@@ -245,12 +257,12 @@ async def test_analyze_upstream_error_maps_to_upstream_failed(tmp_path):
 _TRUNCATED = (
     '{"server_info": {"hostname": "localhost.localdomain", "os": "Kylin", '
     '"kernel": "4.19.90"}, '
-    '"risk_level": "high", '
+    '"risk_level": "高危", '
     '"risk_items": ['
-    '{"check_item": "密码有效期", "severity": "high", '
+    '{"check_item": "密码有效期", "passed": false, "severity": "高危", '
     '"current_status": "99999", "risk_description": "密码不更换", '
     '"recommendation": "PASS_MAX_DAYS=90"}, '
-    '{"check_item": "SELinux", "severity": "hi'
+    '{"check_item": "SELinux", "passed": false, "severity": "严重'
 )
 
 
@@ -264,7 +276,7 @@ async def test_analyze_continues_truncated_output_until_complete(tmp_path):
     response = await service.analyze("report.md", _VALID_CONTENT)
 
     assert response.partial is False
-    assert response.risk_level == "high"
+    assert response.risk_level == "高危"
     assert len(model.calls) == 2
     continued_messages = model.calls[1]
     assert continued_messages[-2].content == head
@@ -287,7 +299,7 @@ async def test_analyze_salvages_when_continuations_exhausted(tmp_path):
     # 1 initial call + 3 continuation rounds (the configured cap).
     assert len(model.calls) == 4
     assert response.partial is True
-    assert response.risk_level == "high"
+    assert response.risk_level == "高危"
     assert [item.check_item for item in response.risk_items] == ["密码有效期"]
     assert response.summary is None  # no placeholder text fabricated
 
@@ -346,7 +358,7 @@ async def test_analyze_repairs_invalid_risk_level_via_salvage(tmp_path):
     response = await service.analyze("report.md", _VALID_CONTENT)
 
     assert response.partial is True
-    assert response.risk_level == "high"
+    assert response.risk_level == "高危"
 
 
 # --- _salvage_analysis -----------------------------------------------------
@@ -355,26 +367,62 @@ async def test_analyze_repairs_invalid_risk_level_via_salvage(tmp_path):
 def test_salvage_derives_risk_level_from_items():
     truncated = (
         '{"server_info": {"os": "Kylin V10"}, "risk_items": ['
-        '{"check_item": "密码有效期", "severity": "critical", '
+        '{"check_item": "密码有效期", "passed": false, "severity": "严重", '
         '"current_status": "99999", "risk_description": "x", '
         '"recommendation": "y"}'
     )
 
     salvaged = _salvage_analysis(truncated)
 
-    assert salvaged.risk_level == "critical"
+    assert salvaged.risk_level == "严重"
     assert len(salvaged.risk_items) == 1
+    assert salvaged.risk_items[0].passed is False
     assert salvaged.summary is None
+
+
+def test_salvage_excludes_passed_items_from_risk_level():
+    # A passed critical-severity check must not lift the overall level
+    # above the only failed item's severity.
+    truncated = (
+        '{"risk_items": ['
+        '{"check_item": "SELinux", "passed": true, "severity": "严重", '
+        '"current_status": "enforcing", "risk_description": "x", '
+        '"recommendation": "y"}, '
+        '{"check_item": "密码有效期", "passed": false, "severity": "低危", '
+        '"current_status": "99999", "risk_description": "x", '
+        '"recommendation": "y"}'
+    )
+
+    salvaged = _salvage_analysis(truncated)
+
+    assert salvaged.risk_level == "低危"
+    assert [item.passed for item in salvaged.risk_items] == [True, False]
+
+
+def test_salvage_backfills_missing_passed_as_false():
+    # Truncation can cut an item before its "passed" flag was generated;
+    # the unknown outcome defaults to not passed so the risk level is
+    # not silently lowered.
+    truncated = (
+        '{"risk_items": [{"check_item": "密码有效期", "severity": "高危", '
+        '"current_status": "99999", "risk_description": "x", '
+        '"recommendation": "y"}'
+    )
+
+    salvaged = _salvage_analysis(truncated)
+
+    assert salvaged.risk_items[0].passed is False
+    assert salvaged.risk_level == "高危"
 
 
 def test_salvage_maps_info_only_items_to_low_level():
     truncated = (
-        '{"risk_items": [{"check_item": "系统类型", "severity": "info", '
+        '{"risk_items": [{"check_item": "系统类型", "severity": "提示", '
         '"current_status": "rhel", "risk_description": "x", '
         '"recommendation": "y"}'
     )
 
-    assert _salvage_analysis(truncated).risk_level == "low"
+    assert _salvage_analysis(truncated).risk_level == "低危"
 
 
 def test_salvage_skips_brace_inside_string_value():
@@ -382,7 +430,7 @@ def test_salvage_skips_brace_inside_string_value():
     # repair must fall back to the previous real closing brace.
     truncated = (
         '{"server_info": {"os": "x"}, "risk_items": ['
-        '{"check_item": "a", "severity": "low", "current_status": "s", '
+        '{"check_item": "a", "severity": "低危", "current_status": "s", '
         '"risk_description": "d", "recommendation": "run } cmd'
     )
 
@@ -390,7 +438,7 @@ def test_salvage_skips_brace_inside_string_value():
 
     assert salvaged.server_info.os == "x"
     assert salvaged.risk_items == []
-    assert salvaged.risk_level == "low"
+    assert salvaged.risk_level == "低危"
 
 
 def test_salvage_raises_without_complete_fragment():
@@ -409,6 +457,17 @@ def test_analysis_rejects_unknown_fields():
 def test_analysis_rejects_invalid_risk_level():
     payload = dict(_VALID_ANALYSIS_JSON)
     payload["risk_level"] = "extreme"
+
+    with pytest.raises(ValidationError):
+        SecurityAnalysis.model_validate(payload)
+
+
+def test_analysis_rejects_risk_item_without_passed():
+    payload = dict(_VALID_ANALYSIS_JSON)
+    payload["risk_items"] = [
+        {key: value for key, value in item.items() if key != "passed"}
+        for item in _VALID_ANALYSIS_JSON["risk_items"]
+    ]
 
     with pytest.raises(ValidationError):
         SecurityAnalysis.model_validate(payload)

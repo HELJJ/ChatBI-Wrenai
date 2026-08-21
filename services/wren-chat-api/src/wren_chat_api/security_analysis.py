@@ -43,30 +43,36 @@ _SYSTEM_PROMPT = """\
 
 1. server_info：提取报告中的主机名（hostname）、操作系统（os）、\
 内核版本（kernel）；报告中没有的字段填 null。
-2. risk_items：列出所有需要关注或整改的风险项：
-   - 每个 FAIL 项都必须列为风险项；
+2. risk_items：列出报告中的所有检查项（含通过项）：
+   - 每个 FAIL 项和 PASS 项都必须列出；
    - INFO 项，以及报告未覆盖但结合系统信息（操作系统、内核版本等）\
-值得警惕的问题，也应列出；
-   - PASS 项不要列出；
-   - 每个风险项包含：check_item（检查项名称）、severity（严重度）、\
-current_status（当前状态，引用报告中的原始数值）、\
-risk_description（风险说明，说明不整改可能带来的后果）、\
-recommendation（整改建议，尽量给出具体的配置文件路径或命令）。
-3. risk_level：总体风险等级，取所有风险项中的最高严重度\
-（info 不计入）；没有风险项时为 "low"。
+值得警惕的问题，也应列出（视为未通过）；
+   - 每个检查项包含：check_item（检查项名称）、passed（是否通过：\
+PASS 为 true；FAIL、INFO 及报告未覆盖的项为 false）、severity\
+（严重度，取 "严重"、"高危"、"中危"、"低危"、"提示" 之一，\
+按该项不合规时的风险程度评定）、current_status（当前状态，\
+引用报告中的原始数值）、risk_description（风险说明：未通过项说明\
+不整改可能带来的后果；通过项简要说明当前已满足的要求）、\
+recommendation（整改建议：未通过项尽量给出具体的配置文件路径或\
+命令；通过项给出保持建议）。
+3. risk_level：总体风险等级，取 "严重"、"高危"、"中危"、"低危" 之一，\
+为所有未通过（passed 为 false）项中的最高严重度（"提示" 不计入）；\
+没有未通过项时为 "低危"。
 4. summary：用中文简要总结整体安全状况，并给出整改优先级建议。
 
-输出必须完整，严格控制篇幅以防被截断：risk_items 按严重度从高到低\
-排序，最多 12 项（超出时只保留最严重的）；每项的 risk_description 与 \
-recommendation 各不超过 80 字；summary 不超过 120 字。
+输出必须完整，严格控制篇幅以防被截断：risk_items 中未通过项在前、\
+按严重度从高到低排序，通过项在后；未通过项最多 12 项（超出时只保留\
+最严重的），通过项最多 15 项（超出时省略）；每项的 risk_description\
+与 recommendation 各不超过 80 字（通过项各不超过 40 字）；\
+summary 不超过 120 字。
 
 严格只输出一个 JSON 对象：不要使用 Markdown 代码围栏，\
 不要输出任何解释性文字。JSON 结构如下：
 {"server_info": {"hostname": 字符串或null, "os": 字符串或null, \
 "kernel": 字符串或null},\
- "risk_level": "critical"|"high"|"medium"|"low",\
- "risk_items": [{"check_item": 字符串, \
-"severity": "critical"|"high"|"medium"|"low"|"info", \
+ "risk_level": "严重"|"高危"|"中危"|"低危",\
+ "risk_items": [{"check_item": 字符串, "passed": true|false, \
+"severity": "严重"|"高危"|"中危"|"低危"|"提示", \
 "current_status": 字符串, "risk_description": 字符串, \
 "recommendation": 字符串}],\
  "summary": 字符串}
@@ -83,8 +89,8 @@ _CONTINUATION_PROMPT = (
 # limit, return the fully generated risk items instead of failing the request
 # (field-observed gateways cut generation mid-string). Missing fields are
 # derived or omitted — placeholder text is never fabricated.
-_SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
-_RANK_TO_LEVEL = {1: "low", 2: "medium", 3: "high", 4: "critical"}
+_SEVERITY_RANK = {"提示": 0, "低危": 1, "中危": 2, "高危": 3, "严重": 4}
+_RANK_TO_LEVEL = {1: "低危", 2: "中危", 3: "高危", 4: "严重"}
 
 
 def validate_report(filename: str | None, raw: bytes, max_bytes: int) -> str:
@@ -140,13 +146,17 @@ def _missing_closes(text: str) -> str:
 
 
 def _derive_risk_level(items: list[dict[str, Any]]) -> str:
-    """Overall level from item severities; info does not count, so the
-    lowest derivable level is "low"."""
+    """Overall level from failed item severities; passed and info items do
+    not count, so the lowest derivable level is "低危"."""
     best = max(
-        (_SEVERITY_RANK.get(item.get("severity"), 0) for item in items),
+        (
+            _SEVERITY_RANK.get(item.get("severity"), 0)
+            for item in items
+            if not item.get("passed")
+        ),
         default=0,
     )
-    return _RANK_TO_LEVEL.get(best, "low")
+    return _RANK_TO_LEVEL.get(best, "低危")
 
 
 def _salvage_analysis(text: str) -> SecurityAnalysis:
@@ -168,6 +178,10 @@ def _salvage_analysis(text: str) -> SecurityAnalysis:
         raise ValueError("salvaged JSON fragment is not an object")
 
     items = [item for item in (data.get("risk_items") or []) if isinstance(item, dict)]
+    # A "passed" flag cut off by truncation defaults to false: an unknown
+    # outcome must not silently lower the derived overall risk level.
+    for item in items:
+        item.setdefault("passed", False)
     data["risk_items"] = items
     data.setdefault("server_info", {})
     if data.get("risk_level") not in get_args(RiskLevel):

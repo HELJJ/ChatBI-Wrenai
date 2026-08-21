@@ -80,8 +80,8 @@ class AttemptResult(StrictModel):
     rows: list[dict[str, JsonValue]]
 
 
-Severity = Literal["critical", "high", "medium", "low", "info"]
-RiskLevel = Literal["critical", "high", "medium", "low"]
+Severity = Literal["严重", "高危", "中危", "低危", "提示"]
+RiskLevel = Literal["严重", "高危", "中危", "低危"]
 
 
 class ServerInfo(StrictModel):
@@ -93,9 +93,11 @@ class ServerInfo(StrictModel):
 
 
 class RiskItem(StrictModel):
-    """One finding the model flags for remediation."""
+    """One check finding: failed items drive remediation, passed ones are
+    listed for completeness."""
 
     check_item: str = Field(min_length=1)
+    passed: bool
     severity: Severity
     current_status: str = Field(min_length=1)
     risk_description: str = Field(min_length=1)
