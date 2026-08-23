@@ -113,3 +113,12 @@ class InvalidAnalysisResult(ChatServiceError):
     code = "INVALID_ANALYSIS_RESULT"
     http_status = 502
     public_message = "模型未能生成有效的分析结果，请重试。"
+
+
+class InvalidPentestFile(ChatServiceError):
+    code = "INVALID_PENTEST_FILE"
+    http_status = 422
+    public_message = (
+        "上传的文件不是可解析的渗透测试记录单 PDF：需 .pdf 扩展名、"
+        "有效的 PDF 文件头且文档未加密损坏，请检查后重新上传。"
+    )

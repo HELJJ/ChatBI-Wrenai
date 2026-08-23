@@ -73,6 +73,24 @@ class Settings(BaseSettings):
     # falling back to salvaging the partial output.
     analysis_max_continuations: int = Field(default=3, ge=0, le=5)
 
+    # --- Pentest-record extraction (PDF risk-item pipeline) ---
+    # All four model knobs fall back to the chat model settings, so a
+    # deployment whose chat model is already multimodal (e.g. qwen3.7-plus
+    # via DashScope) needs no extra configuration. Point them at an intranet
+    # OpenAI-compatible endpoint (e.g. vLLM serving GLM-4.6V) to switch.
+    pentest_vlm_model: str | None = None
+    pentest_vlm_base_url: str | None = None
+    pentest_vlm_api_key: SecretStr | None = None
+    # OCR channel for scanned pages (text fallback only, never tables);
+    # defaults to the extraction VLM itself, which can transcribe pages.
+    pentest_ocr_model: str | None = None
+    # Vendor switch (DashScope qwen3): non-streaming calls must explicitly
+    # disable thinking mode; same reasoning as model_enable_thinking.
+    pentest_vlm_enable_thinking: bool = False
+    pentest_render_dpi: int = Field(default=150, ge=72, le=400)
+    pentest_page_concurrency: int = Field(default=4, ge=1, le=16)
+    pentest_doc_concurrency: int = Field(default=2, ge=1, le=8)
+
     @field_validator("state_database_url")
     @classmethod
     def validate_state_database_url(cls, value: SecretStr) -> SecretStr:

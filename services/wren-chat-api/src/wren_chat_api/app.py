@@ -23,6 +23,7 @@ from wren_chat_api.contracts import (
     ChatResponse,
     ErrorBody,
     ErrorResponse,
+    PentestExtractResponse,
     SecurityAnalysisResponse,
 )
 from wren_chat_api.db import (
@@ -39,6 +40,10 @@ from wren_chat_api.metrics import (
     REQUESTS,
     metrics_response,
 )
+from wren_chat_api.pentest_extract import (
+    PentestExtractService,
+    validate_pentest_upload,
+)
 from wren_chat_api.recovery import run_recovery_loop
 from wren_chat_api.security_analysis import AnalysisService, validate_report
 
@@ -50,6 +55,9 @@ _INVALID_REQUEST_MESSAGE = (
 _ANALYSIS_INVALID_REQUEST_MESSAGE = (
     "请求参数不合法，请以 multipart/form-data 上传名为 file 的 .md 报告文件。"
 )
+_PENTEST_INVALID_REQUEST_MESSAGE = (
+    "请求参数不合法，请以 multipart/form-data 上传名为 file 的 .pdf 渗透测试记录单。"
+)
 _GENERIC_INVALID_REQUEST_MESSAGE = "请求参数不合法，请检查请求内容。"
 
 
@@ -58,6 +66,7 @@ class AppOverrides(TypedDict, total=False):
 
     chat_service: Any
     analysis_service: Any
+    pentest_service: Any
     readiness: Callable[[], Awaitable[None]]
 
 
@@ -72,13 +81,18 @@ def create_app(
 
     lifespan = (
         None
-        if "chat_service" in overrides or "analysis_service" in overrides
+        if (
+            "chat_service" in overrides
+            or "analysis_service" in overrides
+            or "pentest_service" in overrides
+        )
         else _production_lifespan(resolved_settings)
     )
     app = FastAPI(title="Wren Chat API", version="0.1.0", lifespan=lifespan)
     app.state.settings = resolved_settings
     app.state.chat_service = overrides.get("chat_service")
     app.state.analysis_service = overrides.get("analysis_service")
+    app.state.pentest_service = overrides.get("pentest_service")
     app.state.readiness = overrides.get("readiness") or _default_readiness
 
     def get_chat_service(request: Request) -> Any:
@@ -91,6 +105,12 @@ def create_app(
         service = request.app.state.analysis_service
         if service is None:
             raise RuntimeError("analysis service not initialized")
+        return service
+
+    def get_pentest_service(request: Request) -> Any:
+        service = request.app.state.pentest_service
+        if service is None:
+            raise RuntimeError("pentest service not initialized")
         return service
 
     @app.post(
@@ -149,6 +169,31 @@ def create_app(
         REQUESTS.labels(route=route, status="200").inc()
         return response
 
+    @app.post(
+        "/v1/pentest-report/extract",
+        response_model=PentestExtractResponse,
+        dependencies=[Depends(auth)],
+    )
+    async def extract_pentest_report(
+        file: UploadFile = File(...),
+        service: Any = Depends(get_pentest_service),
+    ) -> PentestExtractResponse:
+        route = "/v1/pentest-report/extract"
+        with REQUEST_LATENCY.labels(route=route).time():
+            try:
+                raw = await file.read()
+                validate_pentest_upload(file.filename, raw)
+                response = await service.extract(file.filename, raw)
+            except ChatServiceError as exc:
+                REQUESTS.labels(route=route, status=str(exc.http_status)).inc()
+                raise
+            except Exception as exc:
+                logger.error("unhandled pentest extraction error", exc_info=True)
+                REQUESTS.labels(route=route, status="500").inc()
+                raise InternalError(cause=exc) from exc
+        REQUESTS.labels(route=route, status="200").inc()
+        return response
+
     @app.get("/health/live")
     async def live() -> dict[str, str]:
         return {"status": "ok"}
@@ -194,6 +239,7 @@ def create_app(
         messages_by_path = {
             "/v1/chat": _INVALID_REQUEST_MESSAGE,
             "/v1/security-report/analysis": _ANALYSIS_INVALID_REQUEST_MESSAGE,
+            "/v1/pentest-report/extract": _PENTEST_INVALID_REQUEST_MESSAGE,
         }
         return JSONResponse(
             status_code=400,
@@ -299,6 +345,9 @@ def _production_lifespan(settings: Settings) -> Callable[[FastAPI], Any]:
             settings=settings,
         )
         analysis_service = AnalysisService(model=model, settings=settings)
+        # Needs neither the database nor the chat graph: constructed from
+        # settings alone (model credentials resolved inside).
+        app.state.pentest_service = PentestExtractService(settings=settings)
 
         async def readiness() -> None:
             async with app_pool.connection() as conn:

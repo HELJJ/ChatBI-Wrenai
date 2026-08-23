@@ -127,3 +127,40 @@ class SecurityAnalysisResponse(StrictModel):
     # generated risk items were recovered; the last, truncated item is
     # dropped and missing fields fall back to derived values.
     partial: bool = False
+
+
+class PentestRiskItem(StrictModel):
+    """One risk entry extracted from the 安全风险项 section of a pentest
+    record: the three ledger fields plus the page the row was read from."""
+
+    test_id: str = Field(min_length=1)
+    test_item: str = Field(min_length=1)
+    severity: str = Field(min_length=1)
+    page: int = Field(ge=1)
+
+
+class PentestExtractMeta(StrictModel):
+    """Extraction run diagnostics for audit and troubleshooting."""
+
+    pages: int = Field(ge=0)
+    # Reviewed page span, e.g. "3-9"; "-" when nothing was gated.
+    reviewed_pages: str
+    gate_mode: str
+    section_prefix: str | None = None
+    boundary_cut_pages: list[int] = Field(default_factory=list)
+    ocr_pages: list[int] = Field(default_factory=list)
+    failed_pages: int = Field(ge=0)
+    dpi: int = Field(ge=1)
+    duration_seconds: float = Field(ge=0)
+    model: str
+
+
+class PentestExtractResponse(StrictModel):
+    """Public success response of the pentest-record extraction endpoint."""
+
+    filename: Filename
+    risk_items: list[PentestRiskItem] = Field(default_factory=list)
+    # Validation warnings (anti-hallucination hits, count mismatches, page
+    # failures); non-empty output stays usable but warrants manual review.
+    anomalies: list[str] = Field(default_factory=list)
+    meta: PentestExtractMeta
