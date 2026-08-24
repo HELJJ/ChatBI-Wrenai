@@ -131,36 +131,19 @@ class SecurityAnalysisResponse(StrictModel):
 
 class PentestRiskItem(StrictModel):
     """One risk entry extracted from the 安全风险项 section of a pentest
-    record: the three ledger fields plus the page the row was read from."""
+    record (test id, name, and verdict classification)."""
 
-    test_id: str = Field(min_length=1)
-    test_item: str = Field(min_length=1)
-    severity: str = Field(min_length=1)
-    page: int = Field(ge=1)
-
-
-class PentestExtractMeta(StrictModel):
-    """Extraction run diagnostics for audit and troubleshooting."""
-
-    pages: int = Field(ge=0)
-    # Reviewed page span, e.g. "3-9"; "-" when nothing was gated.
-    reviewed_pages: str
-    gate_mode: str
-    section_prefix: str | None = None
-    boundary_cut_pages: list[int] = Field(default_factory=list)
-    ocr_pages: list[int] = Field(default_factory=list)
-    failed_pages: int = Field(ge=0)
-    dpi: int = Field(ge=1)
-    duration_seconds: float = Field(ge=0)
-    model: str
+    testCode: str = Field(min_length=1)
+    testName: str = Field(min_length=1)
+    testResult: str = Field(min_length=1)
 
 
 class PentestExtractResponse(StrictModel):
-    """Public success response of the pentest-record extraction endpoint."""
+    """Public success response of the pentest-record extraction endpoint.
+
+    Validation diagnostics (anti-hallucination hits, count mismatches,
+    page failures) are intentionally not part of the public contract;
+    they are logged server-side for the manual-review queue."""
 
     filename: Filename
     risk_items: list[PentestRiskItem] = Field(default_factory=list)
-    # Validation warnings (anti-hallucination hits, count mismatches, page
-    # failures); non-empty output stays usable but warrants manual review.
-    anomalies: list[str] = Field(default_factory=list)
-    meta: PentestExtractMeta
