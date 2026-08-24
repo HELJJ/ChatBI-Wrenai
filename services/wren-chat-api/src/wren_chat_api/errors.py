@@ -120,22 +120,6 @@ class InvalidExtractionResult(ChatServiceError):
     http_status = 502
     public_message = "提取结果未通过校验，请重试或更换清晰的 PDF 文件后重新上传。"
 
-    def __init__(
-        self,
-        internal_message: str | None = None,
-        *,
-        trace_id: str | None = None,
-        cause: Exception | None = None,
-    ) -> None:
-        super().__init__(internal_message, cause=cause)
-        if trace_id:
-            # Instance-level shadow so callers can correlate the public
-            # error with the matching service-log line.
-            self.public_message = (
-                f"{self.public_message[:-1]}，"
-                f"追踪号 {trace_id} 可在服务日志中检索本次详情。"
-            )
-
 
 class InvalidPentestFile(ChatServiceError):
     code = "INVALID_PENTEST_FILE"
