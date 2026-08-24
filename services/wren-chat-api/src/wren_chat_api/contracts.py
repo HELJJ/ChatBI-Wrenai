@@ -138,6 +138,43 @@ class PentestRiskItem(StrictModel):
     testResult: str = Field(min_length=1)
 
 
+ComponentName = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=200),
+]
+ComponentVersion = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=100),
+]
+VulnerabilityDescription = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=4_000),
+]
+
+
+class RiskSelfCheckRequest(StrictModel):
+    """Public request accepted by the risk self-check endpoint."""
+
+    component: ComponentName
+    version: ComponentVersion
+    vulnerability_descriptions: list[VulnerabilityDescription] = Field(
+        min_length=1,
+        max_length=50,
+    )
+
+
+class RiskSelfCheckResponse(StrictModel):
+    """Public success response of the risk self-check endpoint.
+
+    ``matched`` is 1 when the model judged at least one description to hit
+    the component at the requested version, 0 otherwise. Which descriptions
+    matched is logged server-side only; the public contract stays minimal.
+    """
+
+    component: ComponentName
+    matched: Literal[0, 1]
+
+
 class PentestExtractResponse(StrictModel):
     """Public success response of the pentest-record extraction endpoint.
 

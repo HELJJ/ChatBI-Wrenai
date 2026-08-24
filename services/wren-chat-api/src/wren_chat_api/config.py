@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     # Continuation rounds appended after a length-truncated response before
     # falling back to salvaging the partial output.
     analysis_max_continuations: int = Field(default=3, ge=0, le=5)
+    # --- Risk self-check (component+version vs vulnerability descriptions) ---
+    # One LLM pass over at most 50 descriptions; the verdict JSON is tiny.
+    risk_selfcheck_timeout_seconds: int = Field(default=120, ge=1, le=600)
+    risk_selfcheck_max_tokens: int = Field(default=1_024, ge=64, le=8_192)
 
     # --- Pentest-record extraction (PDF risk-item pipeline) ---
     # All four model knobs fall back to the chat model settings, so a

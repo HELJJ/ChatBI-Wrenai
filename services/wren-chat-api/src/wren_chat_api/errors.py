@@ -121,6 +121,12 @@ class InvalidExtractionResult(ChatServiceError):
     public_message = "提取结果未通过校验，请重试或更换清晰的 PDF 文件后重新上传。"
 
 
+class InvalidRiskCheckResult(ChatServiceError):
+    code = "INVALID_RISK_CHECK_RESULT"
+    http_status = 502
+    public_message = "模型未能给出有效的风险匹配结果"
+
+
 class InvalidPentestFile(ChatServiceError):
     code = "INVALID_PENTEST_FILE"
     http_status = 422
