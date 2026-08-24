@@ -1,18 +1,25 @@
-"""LLM-backed risk self-check: match a component+version against vulnerability
-descriptions and report whether any of them hits."""
+"""LLM-backed risk self-check: match component+version pairs against their
+vulnerability descriptions and report, per batch entry, whether any of them
+hits."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from openai import APIError as OpenAIAPIError
 
 from wren_chat_api.config import Settings
-from wren_chat_api.contracts import RiskSelfCheckRequest, RiskSelfCheckResponse
+from wren_chat_api.contracts import (
+    RiskSelfCheckErrorItem,
+    RiskSelfCheckItem,
+    RiskSelfCheckRequest,
+    RiskSelfCheckResponse,
+    RiskSelfCheckResultItem,
+)
 from wren_chat_api.errors import (
     InvalidRiskCheckResult,
     RequestTimedOut,
@@ -50,15 +57,15 @@ Apache Struts 是同一组件；名称相似但不同的软件（如 log4j 与 l
 没有任何命中时输出 {"matched_indices": []}。"""
 
 
-def _build_user_prompt(request: RiskSelfCheckRequest) -> str:
+def _build_user_prompt(item: RiskSelfCheckItem) -> str:
     lines = [
-        f"组件：{request.component}",
-        f"版本：{request.version}",
-        f"漏洞描述（共 {len(request.vulnerability_descriptions)} 条）：",
+        f"组件：{item.component}",
+        f"版本：{item.version}",
+        f"漏洞描述（共 {len(item.vulnerability_descriptions)} 条）：",
     ]
     lines.extend(
         f"[{index}] {description}"
-        for index, description in enumerate(request.vulnerability_descriptions)
+        for index, description in enumerate(item.vulnerability_descriptions)
     )
     return "\n".join(lines)
 
@@ -68,7 +75,7 @@ def _parse_indices(text: str, count: int) -> set[int]:
 
     Any deviation — missing/malformed JSON, non-integer entries, booleans,
     duplicates folded silently is fine but out-of-range indices are not —
-    raises so the caller can fail the whole request closed.
+    raises so the caller can fail the item closed.
     """
     start = text.find("{")
     end = text.rfind("}")
@@ -95,7 +102,7 @@ def _parse_indices(text: str, count: int) -> set[int]:
 
 
 class RiskSelfCheckService:
-    """Judge one component+version against vulnerability descriptions."""
+    """Judge each batch entry's component+version against its descriptions."""
 
     def __init__(self, *, model: Any, settings: Settings) -> None:
         # The verdict is a tiny JSON array, so a small explicit ceiling is
@@ -103,26 +110,58 @@ class RiskSelfCheckService:
         self._model = model.bind(max_tokens=settings.risk_selfcheck_max_tokens)
         self._settings = settings
 
-    async def check(self, request: RiskSelfCheckRequest) -> RiskSelfCheckResponse:
-        """Return the 0/1 verdict for the request, or raise a typed error."""
+    async def check(self, item: RiskSelfCheckItem) -> Literal[0, 1]:
+        """Return the 0/1 verdict for one entry, or raise a typed error."""
         messages = [
             SystemMessage(content=_SYSTEM_PROMPT),
-            HumanMessage(content=_build_user_prompt(request)),
+            HumanMessage(content=_build_user_prompt(item)),
         ]
         response = await self._invoke(messages)
         text = str(response.content)
         try:
-            indices = _parse_indices(text, len(request.vulnerability_descriptions))
+            indices = _parse_indices(text, len(item.vulnerability_descriptions))
         except ValueError as exc:
             logger.warning(
                 "risk self-check output failed validation (%s); failing closed",
                 exc,
             )
             raise InvalidRiskCheckResult(cause=exc) from exc
-        return RiskSelfCheckResponse(
-            component=request.component,
-            matched=1 if indices else 0,
-        )
+        return 1 if indices else 0
+
+    async def check_batch(self, request: RiskSelfCheckRequest) -> RiskSelfCheckResponse:
+        """Judge every entry concurrently, tolerating per-entry failures.
+
+        A failed entry comes back as an ``error`` item instead of being
+        dropped or masked as matched=0; results keep request order.
+        """
+        semaphore = asyncio.Semaphore(self._settings.risk_selfcheck_concurrency)
+
+        async def run(item: RiskSelfCheckItem) -> RiskSelfCheckResultItem | RiskSelfCheckErrorItem:
+            async with semaphore:
+                try:
+                    matched = await self.check(item)
+                except (
+                    InvalidRiskCheckResult,
+                    UpstreamFailed,
+                    RequestTimedOut,
+                ) as exc:
+                    logger.warning(
+                        "risk self-check item %s failed: %s",
+                        item.id,
+                        type(exc).__name__,
+                    )
+                    return RiskSelfCheckErrorItem(
+                        id=item.id,
+                        error=exc.public_message,
+                    )
+                return RiskSelfCheckResultItem(
+                    id=item.id,
+                    component=item.component,
+                    matched=matched,
+                )
+
+        entries = await asyncio.gather(*(run(item) for item in request.items))
+        return RiskSelfCheckResponse(data=list(entries))
 
     async def _invoke(self, messages: list[Any]) -> Any:
         try:

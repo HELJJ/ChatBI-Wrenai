@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from openai import APIConnectionError
 
 from wren_chat_api.config import Settings
-from wren_chat_api.contracts import RiskSelfCheckRequest
+from wren_chat_api.contracts import RiskSelfCheckItem, RiskSelfCheckRequest
 from wren_chat_api.errors import (
     InvalidRiskCheckResult,
     RequestTimedOut,
@@ -40,11 +40,23 @@ def make_settings(tmp_path, **overrides) -> Settings:
     return Settings(**values, _env_file=None)
 
 
-def make_request(**overrides) -> RiskSelfCheckRequest:
+def make_item(item_id: str = "2121", **overrides) -> RiskSelfCheckItem:
     values = {
+        "id": item_id,
         "component": "struts2",
         "version": "2.3.31",
         "vulnerability_descriptions": list(_DESCRIPTIONS),
+    }
+    values.update(overrides)
+    return RiskSelfCheckItem(**values)
+
+
+def make_request(**overrides) -> RiskSelfCheckRequest:
+    values = {
+        "list": [
+            make_item("2121"),
+            make_item("1111", component="log4j", version="2.14.1"),
+        ]
     }
     values.update(overrides)
     return RiskSelfCheckRequest(**values)
@@ -57,11 +69,16 @@ class FakeModel:
         content: str = '{"matched_indices": []}',
         delay: float = 0,
         error=None,
+        contents_by_call: list[str] | None = None,
     ):
         self.delay = delay
         self.error = error
         self.content = content
+        # Per-call contents; the last entry repeats for further calls.
+        self.contents_by_call = contents_by_call
         self.calls = []
+        self.active = 0
+        self.peak_concurrency = 0
         self.bound_kwargs: dict = {}
 
     def bind(self, **kwargs):
@@ -70,11 +87,21 @@ class FakeModel:
 
     async def ainvoke(self, messages):
         self.calls.append(messages)
-        if self.delay:
-            await asyncio.sleep(self.delay)
-        if self.error is not None:
-            raise self.error
-        return AIMessage(content=self.content)
+        self.active += 1
+        self.peak_concurrency = max(self.peak_concurrency, self.active)
+        try:
+            if self.delay:
+                await asyncio.sleep(self.delay)
+            if self.error is not None:
+                raise self.error
+            if self.contents_by_call is not None:
+                index = min(len(self.calls) - 1, len(self.contents_by_call) - 1)
+                content = self.contents_by_call[index]
+            else:
+                content = self.content
+            return AIMessage(content=content)
+        finally:
+            self.active -= 1
 
 
 def make_service(tmp_path, model, **settings_overrides):
@@ -88,7 +115,7 @@ def make_service(tmp_path, model, **settings_overrides):
 
 
 def test_user_prompt_carries_component_version_and_numbered_descriptions():
-    prompt = _build_user_prompt(make_request())
+    prompt = _build_user_prompt(make_item())
 
     assert "组件：struts2" in prompt
     assert "版本：2.3.31" in prompt
@@ -139,27 +166,21 @@ async def test_check_returns_1_when_any_description_matches(tmp_path):
     model = FakeModel(content='{"matched_indices": [0, 2]}')
     service = make_service(tmp_path, model)
 
-    response = await service.check(make_request())
-
-    assert response.component == "struts2"
-    assert response.matched == 1
+    assert await service.check(make_item()) == 1
 
 
 async def test_check_returns_0_when_nothing_matches(tmp_path):
     model = FakeModel(content='{"matched_indices": []}')
     service = make_service(tmp_path, model)
 
-    response = await service.check(make_request())
-
-    assert response.component == "struts2"
-    assert response.matched == 0
+    assert await service.check(make_item()) == 0
 
 
 async def test_check_sends_system_and_numbered_user_message(tmp_path):
     model = FakeModel(content='{"matched_indices": []}')
     service = make_service(tmp_path, model)
 
-    await service.check(make_request())
+    await service.check(make_item())
 
     assert len(model.calls) == 1
     system_message, user_message = model.calls[0]
@@ -182,7 +203,7 @@ async def test_check_fails_closed_on_out_of_range_index(tmp_path):
     service = make_service(tmp_path, model)
 
     with pytest.raises(InvalidRiskCheckResult):
-        await service.check(make_request())
+        await service.check(make_item())
 
 
 async def test_check_fails_closed_on_invalid_json(tmp_path):
@@ -190,7 +211,7 @@ async def test_check_fails_closed_on_invalid_json(tmp_path):
     service = make_service(tmp_path, model)
 
     with pytest.raises(InvalidRiskCheckResult):
-        await service.check(make_request())
+        await service.check(make_item())
 
 
 async def test_check_maps_timeout_to_request_timed_out(tmp_path):
@@ -198,7 +219,7 @@ async def test_check_maps_timeout_to_request_timed_out(tmp_path):
     service = make_service(tmp_path, model, risk_selfcheck_timeout_seconds=1)
 
     with pytest.raises(RequestTimedOut):
-        await service.check(make_request())
+        await service.check(make_item())
 
 
 async def test_check_maps_openai_error_to_upstream_failed(tmp_path):
@@ -210,4 +231,83 @@ async def test_check_maps_openai_error_to_upstream_failed(tmp_path):
     service = make_service(tmp_path, model)
 
     with pytest.raises(UpstreamFailed):
-        await service.check(make_request())
+        await service.check(make_item())
+
+
+# --- RiskSelfCheckService.check_batch ----------------------------------------
+
+
+async def test_batch_returns_verdict_per_item_in_request_order(tmp_path):
+    model = FakeModel(
+        contents_by_call=['{"matched_indices": [0]}', '{"matched_indices": []}']
+    )
+    service = make_service(tmp_path, model)
+
+    response = await service.check_batch(make_request())
+
+    assert len(response.data) == 2
+    first, second = response.data
+    assert first.id == "2121"
+    assert first.component == "struts2"
+    assert first.matched == 1
+    assert second.id == "1111"
+    assert second.component == "log4j"
+    assert second.matched == 0
+
+
+async def test_batch_failed_item_becomes_error_item_and_rest_survive(tmp_path):
+    model = FakeModel(
+        contents_by_call=["这不是 JSON", '{"matched_indices": [0]}']
+    )
+    service = make_service(tmp_path, model)
+
+    response = await service.check_batch(make_request())
+
+    assert len(response.data) == 2
+    first, second = response.data
+    # A failed judgment is an error item, never a masked matched=0.
+    assert first.id == "2121"
+    assert first.error == InvalidRiskCheckResult().public_message
+    assert second.id == "1111"
+    assert second.matched == 1
+
+
+async def test_batch_timeout_items_become_error_items(tmp_path):
+    model = FakeModel(delay=10)
+    service = make_service(tmp_path, model, risk_selfcheck_timeout_seconds=1)
+
+    response = await service.check_batch(make_request())
+
+    for entry in response.data:
+        assert entry.error == RequestTimedOut().public_message
+
+
+async def test_batch_upstream_errors_become_error_items(tmp_path):
+    model = FakeModel(
+        error=APIConnectionError(
+            request=httpx.Request("POST", "https://maas.example/v1/chat/completions")
+        )
+    )
+    service = make_service(tmp_path, model)
+
+    response = await service.check_batch(make_request())
+
+    for entry in response.data:
+        assert entry.error == UpstreamFailed().public_message
+
+
+async def test_batch_runs_items_under_the_concurrency_ceiling(tmp_path):
+    model = FakeModel(content='{"matched_indices": []}', delay=0.05)
+    service = make_service(tmp_path, model, risk_selfcheck_concurrency=2)
+    request = make_request(
+        list=[make_item(str(i)) for i in range(6)]
+    )
+
+    await service.check_batch(request)
+
+    assert model.peak_concurrency <= 2
+
+
+async def test_batch_empty_list_is_rejected_by_the_contract():
+    with pytest.raises(ValueError):
+        RiskSelfCheckRequest(list=[])

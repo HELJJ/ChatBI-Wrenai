@@ -150,11 +150,16 @@ VulnerabilityDescription = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=4_000),
 ]
+ItemId = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=128),
+]
 
 
-class RiskSelfCheckRequest(StrictModel):
-    """Public request accepted by the risk self-check endpoint."""
+class RiskSelfCheckItem(StrictModel):
+    """One batch entry: a component+version checked against its descriptions."""
 
+    id: ItemId
     component: ComponentName
     version: ComponentVersion
     vulnerability_descriptions: list[VulnerabilityDescription] = Field(
@@ -163,16 +168,42 @@ class RiskSelfCheckRequest(StrictModel):
     )
 
 
-class RiskSelfCheckResponse(StrictModel):
-    """Public success response of the risk self-check endpoint.
+class RiskSelfCheckRequest(StrictModel):
+    """Public request accepted by the risk self-check endpoint.
 
-    ``matched`` is 1 when the model judged at least one description to hit
-    the component at the requested version, 0 otherwise. Which descriptions
-    matched is logged server-side only; the public contract stays minimal.
+    The wire name is ``list`` (kept via alias) because it shadows the
+    built-in when used as a Python field name in an annotated assignment.
     """
 
+    items: list[RiskSelfCheckItem] = Field(
+        alias="list",
+        min_length=1,
+        max_length=50,
+    )
+
+
+class RiskSelfCheckResultItem(StrictModel):
+    """One judged entry: 1 when any description hits the component at the
+    requested version, 0 otherwise."""
+
+    id: ItemId
     component: ComponentName
     matched: Literal[0, 1]
+
+
+class RiskSelfCheckErrorItem(StrictModel):
+    """One entry whose judgment failed; ``error`` carries the typed error's
+    public message. A failed judgment is never reported as matched=0."""
+
+    id: ItemId
+    error: str = Field(min_length=1)
+
+
+class RiskSelfCheckResponse(StrictModel):
+    """Public success response of the risk self-check endpoint: results in
+    request order, failed entries interleaved as error items."""
+
+    data: list[RiskSelfCheckResultItem | RiskSelfCheckErrorItem]
 
 
 class PentestExtractResponse(StrictModel):

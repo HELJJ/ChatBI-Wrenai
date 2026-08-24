@@ -124,7 +124,7 @@ class InvalidExtractionResult(ChatServiceError):
 class InvalidRiskCheckResult(ChatServiceError):
     code = "INVALID_RISK_CHECK_RESULT"
     http_status = 502
-    public_message = "模型未能给出有效的风险匹配结果"
+    public_message = "模型未能给出有效的风险匹配结果。"
 
 
 class InvalidPentestFile(ChatServiceError):

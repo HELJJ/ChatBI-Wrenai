@@ -62,8 +62,8 @@ _PENTEST_INVALID_REQUEST_MESSAGE = (
     "请求参数不合法，请以 multipart/form-data 上传名为 file 的 .pdf 渗透测试记录单。"
 )
 _RISK_SELFCHECK_INVALID_REQUEST_MESSAGE = (
-    "请求参数不合法：component、version 必填非空，vulnerability_descriptions "
-    "需为 1-50 条非空描述（每条不超过 4000 字符）。"
+    "请求参数不合法：list 需为 1-50 项，每项含 id、component、version 及 "
+    "1-50 条漏洞描述（每条不超过 4000 字符）。"
 )
 _GENERIC_INVALID_REQUEST_MESSAGE = "请求参数不合法，请检查请求内容。"
 
@@ -222,7 +222,7 @@ def create_app(
         route = "/v1/risk/self-check"
         with REQUEST_LATENCY.labels(route=route).time():
             try:
-                response = await service.check(request)
+                response = await service.check_batch(request)
             except ChatServiceError as exc:
                 REQUESTS.labels(route=route, status=str(exc.http_status)).inc()
                 raise
