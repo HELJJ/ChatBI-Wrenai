@@ -125,6 +125,19 @@ def test_user_prompt_carries_component_version_and_numbered_descriptions():
     assert "[2] Apache Log4j2" in prompt
 
 
+def test_user_prompt_without_version_tells_model_to_skip_version_reasoning():
+    prompt = _build_user_prompt(make_item(version=None))
+
+    assert "组件：struts2" in prompt
+    assert "版本：未提供（不推理受影响版本，仅比对组件）" in prompt
+    assert "版本：2" not in prompt
+
+
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_absent_or_blank_version_normalizes_to_none(blank):
+    assert make_item(version=blank).version is None
+
+
 # --- _parse_indices ----------------------------------------------------------
 
 
@@ -188,6 +201,16 @@ async def test_check_sends_system_and_numbered_user_message(tmp_path):
     assert isinstance(user_message, HumanMessage)
     assert "matched_indices" in system_message.content
     assert "组件：struts2" in user_message.content
+
+
+async def test_check_without_version_marks_it_in_the_user_message(tmp_path):
+    model = FakeModel(content='{"matched_indices": [0]}')
+    service = make_service(tmp_path, model)
+
+    assert await service.check(make_item(version=None)) == 1
+
+    user_message = model.calls[0][1]
+    assert "版本：未提供（不推理受影响版本，仅比对组件）" in user_message.content
 
 
 async def test_check_binds_explicit_max_tokens(tmp_path):

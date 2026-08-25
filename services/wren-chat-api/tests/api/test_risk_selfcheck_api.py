@@ -176,6 +176,28 @@ async def test_selfcheck_service_receives_validated_request(tmp_path):
     assert item.vulnerability_descriptions == ["Apache Log4j2 JNDI 注入漏洞"]
 
 
+@pytest.mark.parametrize("version_payload", [None, "", "   "])
+async def test_selfcheck_version_absent_blank_or_null_all_mean_not_provided(
+    tmp_path, version_payload
+):
+    entry = {
+        "id": "2121",
+        "component": "struts2",
+        "vulnerability_descriptions": ["Apache Struts2 远程代码执行漏洞"],
+    }
+    if version_payload is not None:
+        entry["version"] = version_payload
+    app, service = make_app(tmp_path)
+    async with client_for(app) as client:
+        response = await post(client, {"list": [entry]})
+
+    assert response.status_code == 200
+    # An absent/blank/null version reaches the service as None, so the
+    # judgment is component-only and the model is told not to reason about
+    # versions at all.
+    assert service.calls[0].items[0].version is None
+
+
 async def test_wrong_api_key_returns_401(tmp_path):
     app, _ = make_app(tmp_path)
     async with client_for(app) as client:
@@ -198,7 +220,7 @@ async def test_missing_authorization_returns_401(tmp_path):
     [
         {},  # missing list
         {"list": []},  # list must not be empty
-        {"list": [{"id": "1"}]},  # missing component/version/descriptions
+        {"list": [{"id": "1"}]},  # missing component/descriptions (version is optional)
         {
             "list": [
                 {

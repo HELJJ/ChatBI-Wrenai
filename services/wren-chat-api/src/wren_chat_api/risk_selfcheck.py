@@ -1,6 +1,7 @@
-"""LLM-backed risk self-check: match component+version pairs against their
-vulnerability descriptions and report, per batch entry, whether any of them
-hits."""
+"""LLM-backed risk self-check: for each entry, infer from its vulnerability
+descriptions which component (and, when the caller supplied a version,
+which affected range) they hit, and report whether that corresponds to the
+caller's component."""
 
 from __future__ import annotations
 
@@ -35,20 +36,22 @@ logger = logging.getLogger(__name__)
 _SYSTEM_PROMPT = """\
 你是一名漏洞情报分析专家。
 
-用户会提供：待核查的组件名称（component）、该组件的版本（version），\
-以及一组从 0 开始编号的漏洞描述。
+用户会提供：待核查的组件名称（component）、该组件的版本（version，\
+可能未提供），以及一组从 0 开始编号的漏洞描述。
 
-任务：逐条判断每条漏洞描述是否影响该组件的该版本。判定规则：
+任务：对每条漏洞描述，先推断它受影响的组件，再判断该组件与输入组件\
+是否对应。判定规则：
 
-1. 组件匹配：描述声称的受影响组件与输入组件是同一软件。注意命名别名、\
-大小写与厂商前缀差异，例如 log4j 与 Apache Log4j2、struts2 与 \
-Apache Struts 是同一组件；名称相似但不同的软件（如 log4j 与 logback）\
-不是。
-2. 版本匹配：描述中的受影响版本范围包含输入版本。范围表述可能是开闭\
-区间、列表、"及之前/之后"、"所有版本"等；按语义判断，例如输入 2.3.31 \
-落在 "2.3.5 - 2.3.31" 内。
-3. 仅当组件与版本同时匹配才算命中。描述未注明受影响版本范围时，组件\
-匹配即视为命中（安全自查宁可多报不可漏报）。
+1. 推断组件：从描述本身推断它声称受影响的组件。注意命名别名、大小\
+写与厂商前缀差异，例如 log4j 与 Apache Log4j2、struts2 与 Apache \
+Struts 是同一组件；名称相似但不同的软件（如 log4j 与 logback）不是。
+2. 版本判断仅在输入版本已提供时进行：推断描述的受影响版本范围，\
+判断该范围是否覆盖输入版本。范围表述可能是开闭区间、列表、\
+"及之前/之后"、"所有版本"等；按语义判断，例如输入 2.3.31 落在 \
+"2.3.5 - 2.3.31" 内。描述未注明受影响版本范围时，组件对应即视为\
+命中（安全自查宁可多报不可漏报）。
+3. 输入版本未提供时，完全不推理、不比对版本，仅凭组件是否对应\
+判定；描述推断不出任何受影响组件时，无法对应，视为不命中。
 
 严格只输出一个 JSON 对象：不要使用 Markdown 代码围栏，\
 不要输出任何解释性文字。JSON 结构如下：
@@ -58,9 +61,14 @@ Apache Struts 是同一组件；名称相似但不同的软件（如 log4j 与 l
 
 
 def _build_user_prompt(item: RiskSelfCheckItem) -> str:
+    version_line = (
+        f"版本：{item.version}"
+        if item.version is not None
+        else "版本：未提供（不推理受影响版本，仅比对组件）"
+    )
     lines = [
         f"组件：{item.component}",
-        f"版本：{item.version}",
+        version_line,
         f"漏洞描述（共 {len(item.vulnerability_descriptions)} 条）：",
     ]
     lines.extend(
