@@ -27,24 +27,31 @@ _SAMPLE_ANALYSIS = SecurityAnalysisResponse(
         "os": "Kylin Linux Advanced Server V10 (Lance)",
         "kernel": "4.19.90-52.22.v2207.ky10.x86_64",
     },
-    risk_level="高危",
-    risk_items=[
+    modules=[
         {
-            "check_item": "密码有效期",
-            "passed": False,
-            "severity": "高危",
-            "current_status": "当前为 99999",
-            "risk_description": "密码永不过期，不符合等保 2.0 口令定期更换要求。",
-            "recommendation": "编辑 /etc/login.defs 将 PASS_MAX_DAYS 设为 90。",
-        },
-        {
-            "check_item": "密码复杂度",
-            "passed": True,
-            "severity": "中危",
-            "current_status": "已配置 minlen=8",
-            "risk_description": "已启用口令复杂度策略，满足等保 2.0 要求。",
-            "recommendation": "保持现有配置并定期复查。",
-        },
+            "module": "身份鉴别",
+            "total": 2,
+            "passed": 1,
+            "failed": 1,
+            "check_items": [
+                {
+                    "check_item": "密码有效期",
+                    "passed": False,
+                    "severity": "高危",
+                    "current_status": "当前为 99999",
+                    "risk_description": "密码永不过期，不符合等保 2.0 口令定期更换要求。",
+                    "recommendation": "编辑 /etc/login.defs 将 PASS_MAX_DAYS 设为 90。",
+                },
+                {
+                    "check_item": "密码复杂度",
+                    "passed": True,
+                    "severity": "中危",
+                    "current_status": "已配置 minlen=8",
+                    "risk_description": "已启用口令复杂度策略，满足等保 2.0 要求。",
+                    "recommendation": "保持现有配置并定期复查。",
+                },
+            ],
+        }
     ],
     summary="共发现多项不合规，建议优先整改口令与审计类问题。",
 )
@@ -118,21 +125,22 @@ async def test_analysis_success_returns_structured_result(tmp_path, sample_repor
     assert set(body) == {
         "filename",
         "server_info",
-        "risk_level",
-        "risk_items",
+        "modules",
         "summary",
         "partial",
     }
     assert body["partial"] is False
     assert body["filename"] == "etc_detect_report_sample.md"
-    assert body["risk_level"] == "高危"
     assert body["server_info"]["os"] == "Kylin Linux Advanced Server V10 (Lance)"
-    assert len(body["risk_items"]) == 2
-    assert body["risk_items"][0]["check_item"] == "密码有效期"
-    assert body["risk_items"][0]["passed"] is False
-    assert "PASS_MAX_DAYS" in body["risk_items"][0]["recommendation"]
-    assert body["risk_items"][1]["check_item"] == "密码复杂度"
-    assert body["risk_items"][1]["passed"] is True
+    assert len(body["modules"]) == 1
+    module = body["modules"][0]
+    assert module["module"] == "身份鉴别"
+    assert (module["total"], module["passed"], module["failed"]) == (2, 1, 1)
+    assert module["check_items"][0]["check_item"] == "密码有效期"
+    assert module["check_items"][0]["passed"] is False
+    assert "PASS_MAX_DAYS" in module["check_items"][0]["recommendation"]
+    assert module["check_items"][1]["check_item"] == "密码复杂度"
+    assert module["check_items"][1]["passed"] is True
 
 
 async def test_analysis_service_receives_validated_content(tmp_path, sample_report):

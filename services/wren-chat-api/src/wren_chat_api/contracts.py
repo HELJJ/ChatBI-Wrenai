@@ -2,7 +2,14 @@
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StringConstraints,
+    field_validator,
+)
 
 
 class StrictModel(BaseModel):
@@ -81,7 +88,6 @@ class AttemptResult(StrictModel):
 
 
 Severity = Literal["严重", "高危", "中危", "低危", "提示"]
-RiskLevel = Literal["严重", "高危", "中危", "低危"]
 
 
 class ServerInfo(StrictModel):
@@ -92,7 +98,7 @@ class ServerInfo(StrictModel):
     kernel: str | None = None
 
 
-class RiskItem(StrictModel):
+class CheckItem(StrictModel):
     """One check finding: failed items drive remediation, passed ones are
     listed for completeness."""
 
@@ -104,12 +110,21 @@ class RiskItem(StrictModel):
     recommendation: str = Field(min_length=1)
 
 
+class AnalysisModule(StrictModel):
+    """One check module from the report grouping its check items."""
+
+    module: str = Field(min_length=1)
+    total: int = Field(ge=0)
+    passed: int = Field(ge=0)
+    failed: int = Field(ge=0)
+    check_items: list[CheckItem] = Field(default_factory=list)
+
+
 class SecurityAnalysis(StrictModel):
     """Parsed model output for one analyzed server report."""
 
     server_info: ServerInfo = Field(default_factory=ServerInfo)
-    risk_level: RiskLevel
-    risk_items: list[RiskItem] = Field(default_factory=list)
+    modules: list[AnalysisModule] = Field(default_factory=list)
     # None when a truncated output was salvaged before the model generated
     # its summary; no placeholder text is fabricated.
     summary: str | None = Field(default=None, min_length=1)
@@ -120,11 +135,10 @@ class SecurityAnalysisResponse(StrictModel):
 
     filename: Filename
     server_info: ServerInfo
-    risk_level: RiskLevel
-    risk_items: list[RiskItem]
+    modules: list[AnalysisModule]
     summary: str | None = None
     # True when the model output hit the token limit and only the fully
-    # generated risk items were recovered; the last, truncated item is
+    # generated check items were recovered; the last, truncated item is
     # dropped and missing fields fall back to derived values.
     partial: bool = False
 
@@ -157,15 +171,25 @@ ItemId = Annotated[
 
 
 class RiskSelfCheckItem(StrictModel):
-    """One batch entry: a component+version checked against its descriptions."""
+    """One batch entry: a component (version optional) checked against its
+    descriptions. Without a version the judgment is component-only."""
 
     id: ItemId
     component: ComponentName
-    version: ComponentVersion
+    version: ComponentVersion | None = None
     vulnerability_descriptions: list[VulnerabilityDescription] = Field(
         min_length=1,
         max_length=50,
     )
+
+    @field_validator("version", mode="before")
+    @classmethod
+    def blank_version_means_absent(cls, value: object) -> object:
+        """Callers with an unknown version often send "" or null; both mean
+        the version plays no part in the judgment."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
 
 class RiskSelfCheckRequest(StrictModel):
@@ -183,8 +207,9 @@ class RiskSelfCheckRequest(StrictModel):
 
 
 class RiskSelfCheckResultItem(StrictModel):
-    """One judged entry: 1 when any description hits the component at the
-    requested version, 0 otherwise."""
+    """One judged entry: 1 when any description's affected component (and,
+    when a version was supplied, its affected range covering that version)
+    corresponds to the input component, 0 otherwise."""
 
     id: ItemId
     component: ComponentName

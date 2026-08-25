@@ -6,18 +6,14 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from openai import APIError as OpenAIAPIError
 from pydantic import ValidationError
 
 from wren_chat_api.config import Settings
-from wren_chat_api.contracts import (
-    RiskLevel,
-    SecurityAnalysis,
-    SecurityAnalysisResponse,
-)
+from wren_chat_api.contracts import SecurityAnalysis, SecurityAnalysisResponse
 from wren_chat_api.errors import (
     InvalidAnalysisResult,
     InvalidReportFile,
@@ -38,15 +34,21 @@ _SYSTEM_PROMPT = """\
 你是一名资深的 Linux 服务器安全专家，熟悉 GB/T 22239-2019\
 （网络安全等级保护基本要求，等保 2.0）。
 
-用户会提供一份 Markdown 格式的服务器安全检查报告。请分析该报告并输出\
-风险评估结果，要求：
+用户会提供一份 Markdown 格式的服务器安全检查报告，报告中包含多个\
+检查模块，每个模块下有多个检查项。请按模块分析该报告并输出风险评估\
+结果，要求：
 
 1. server_info：提取报告中的主机名（hostname）、操作系统（os）、\
 内核版本（kernel）；报告中没有的字段填 null。
-2. risk_items：列出报告中的所有检查项（含通过项）：
-   - 每个 FAIL 项和 PASS 项都必须列出；
+2. modules：按报告中的模块结构逐模块输出（模块名称、顺序与报告一致），\
+每个模块包含 module（模块名称）、total（总项数）、passed（通过数）、\
+failed（不通过数，均取自报告的汇总表）和 check_items\
+（该模块的所有检查项，含通过项）：
+   - 每个模块中，报告里的每个 FAIL 项和 PASS 项都必须列出，\
+未通过项在前、按严重度从高到低排序，通过项在后；
    - INFO 项，以及报告未覆盖但结合系统信息（操作系统、内核版本等）\
-值得警惕的问题，也应列出（视为未通过）；
+值得警惕的问题，也应列入所属模块（视为未通过）；\
+不属于任何已有模块的，归入名为"其他"的模块；
    - 每个检查项包含：check_item（检查项名称）、passed（是否通过：\
 PASS 为 true；FAIL、INFO 及报告未覆盖的项为 false）、severity\
 （严重度，取 "严重"、"高危"、"中危"、"低危"、"提示" 之一，\
@@ -55,14 +57,9 @@ PASS 为 true；FAIL、INFO 及报告未覆盖的项为 false）、severity\
 不整改可能带来的后果；通过项简要说明当前已满足的要求）、\
 recommendation（整改建议：未通过项尽量给出具体的配置文件路径或\
 命令；通过项给出保持建议）。
-3. risk_level：总体风险等级，取 "严重"、"高危"、"中危"、"低危" 之一，\
-为所有未通过（passed 为 false）项中的最高严重度（"提示" 不计入）；\
-没有未通过项时为 "低危"。
-4. summary：用中文简要总结整体安全状况，并给出整改优先级建议。
+3. summary：用中文简要总结整体安全状况，并给出整改优先级建议。
 
-输出必须完整，严格控制篇幅以防被截断：risk_items 中未通过项在前、\
-按严重度从高到低排序，通过项在后；未通过项最多 12 项（超出时只保留\
-最严重的），通过项最多 15 项（超出时省略）；每项的 risk_description\
+输出必须完整，严格控制篇幅以防被截断：每项的 risk_description\
 与 recommendation 各不超过 80 字（通过项各不超过 40 字）；\
 summary 不超过 120 字。
 
@@ -70,11 +67,11 @@ summary 不超过 120 字。
 不要输出任何解释性文字。JSON 结构如下：
 {"server_info": {"hostname": 字符串或null, "os": 字符串或null, \
 "kernel": 字符串或null},\
- "risk_level": "严重"|"高危"|"中危"|"低危",\
- "risk_items": [{"check_item": 字符串, "passed": true|false, \
-"severity": "严重"|"高危"|"中危"|"低危"|"提示", \
+ "modules": [{"module": 字符串, "total": 整数, "passed": 整数, \
+"failed": 整数, "check_items": [{"check_item": 字符串, \
+"passed": true|false, "severity": "严重"|"高危"|"中危"|"低危"|"提示", \
 "current_status": 字符串, "risk_description": 字符串, \
-"recommendation": 字符串}],\
+"recommendation": 字符串}]}],\
  "summary": 字符串}
 
 所有字符串内容使用中文（server_info 保留报告原文）。"""
@@ -86,11 +83,9 @@ _CONTINUATION_PROMPT = (
 )
 
 # Salvage fallbacks: when every continuation round still ends at the token
-# limit, return the fully generated risk items instead of failing the request
+# limit, return the fully generated modules instead of failing the request
 # (field-observed gateways cut generation mid-string). Missing fields are
 # derived or omitted — placeholder text is never fabricated.
-_SEVERITY_RANK = {"提示": 0, "低危": 1, "中危": 2, "高危": 3, "严重": 4}
-_RANK_TO_LEVEL = {1: "低危", 2: "中危", 3: "高危", 4: "严重"}
 
 
 def validate_report(filename: str | None, raw: bytes, max_bytes: int) -> str:
@@ -145,23 +140,29 @@ def _missing_closes(text: str) -> str:
     return "".join("]" if ch == "[" else "}" for ch in reversed(stack))
 
 
-def _derive_risk_level(items: list[dict[str, Any]]) -> str:
-    """Overall level from failed item severities; passed and info items do
-    not count, so the lowest derivable level is "低危"."""
-    best = max(
-        (
-            _SEVERITY_RANK.get(item.get("severity"), 0)
-            for item in items
-            if not item.get("passed")
-        ),
-        default=0,
-    )
-    return _RANK_TO_LEVEL.get(best, "低危")
+def _salvage_module(module: dict[str, Any]) -> dict[str, Any] | None:
+    """Repair one salvaged module, or None when nothing usable remains."""
+    items = [
+        item for item in (module.get("check_items") or []) if isinstance(item, dict)
+    ]
+    # A "passed" flag cut off by truncation defaults to false: an unknown
+    # outcome must not silently look compliant.
+    for item in items:
+        item.setdefault("passed", False)
+    # Counts cut off by truncation are re-derived from the recovered items;
+    # self-consistent numbers beat a half-written summary-table figure.
+    module["check_items"] = items
+    module["total"] = len(items)
+    module["passed"] = sum(1 for item in items if item.get("passed"))
+    module["failed"] = len(items) - module["passed"]
+    if not isinstance(module.get("module"), str) or not module["module"].strip():
+        return None if not items else {**module, "module": "未命名模块"}
+    return module
 
 
 def _salvage_analysis(text: str) -> SecurityAnalysis:
     """Recover a partial analysis from truncated JSON, dropping the
-    incomplete trailing risk item and back-filling missing fields."""
+    incomplete trailing check item and back-filling missing fields."""
     pos = text.rfind("}")
     while pos != -1:
         candidate = text[: pos + 1]
@@ -177,15 +178,13 @@ def _salvage_analysis(text: str) -> SecurityAnalysis:
     if not isinstance(data, dict):
         raise ValueError("salvaged JSON fragment is not an object")
 
-    items = [item for item in (data.get("risk_items") or []) if isinstance(item, dict)]
-    # A "passed" flag cut off by truncation defaults to false: an unknown
-    # outcome must not silently lower the derived overall risk level.
-    for item in items:
-        item.setdefault("passed", False)
-    data["risk_items"] = items
+    modules = [
+        repaired
+        for module in (data.get("modules") or [])
+        if isinstance(module, dict) and (repaired := _salvage_module(module))
+    ]
+    data["modules"] = modules
     data.setdefault("server_info", {})
-    if data.get("risk_level") not in get_args(RiskLevel):
-        data["risk_level"] = _derive_risk_level(items)
     return SecurityAnalysis.model_validate(data)
 
 

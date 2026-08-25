@@ -33,24 +33,31 @@ _VALID_ANALYSIS_JSON = {
         "os": "Kylin Linux Advanced Server V10",
         "kernel": "4.19.90-52.22.v2207.ky10.x86_64",
     },
-    "risk_level": "高危",
-    "risk_items": [
+    "modules": [
         {
-            "check_item": "密码有效期",
-            "passed": False,
-            "severity": "高危",
-            "current_status": "当前为 99999",
-            "risk_description": "密码长期不更换，不符合等保要求",
-            "recommendation": "将 PASS_MAX_DAYS 设为 90",
-        },
-        {
-            "check_item": "密码复杂度",
-            "passed": True,
-            "severity": "中危",
-            "current_status": "已配置 minlen=8",
-            "risk_description": "已启用口令复杂度策略，满足等保要求",
-            "recommendation": "保持现有配置，定期复查",
-        },
+            "module": "身份鉴别",
+            "total": 2,
+            "passed": 1,
+            "failed": 1,
+            "check_items": [
+                {
+                    "check_item": "密码有效期",
+                    "passed": False,
+                    "severity": "高危",
+                    "current_status": "当前为 99999",
+                    "risk_description": "密码长期不更换，不符合等保要求",
+                    "recommendation": "将 PASS_MAX_DAYS 设为 90",
+                },
+                {
+                    "check_item": "密码复杂度",
+                    "passed": True,
+                    "severity": "中危",
+                    "current_status": "已配置 minlen=8",
+                    "risk_description": "已启用口令复杂度策略，满足等保要求",
+                    "recommendation": "保持现有配置，定期复查",
+                },
+            ],
+        }
     ],
     "summary": "存在多项不合规，建议优先整改口令策略。",
 }
@@ -173,7 +180,7 @@ def test_extract_json_raises_without_object():
 
 def test_extract_json_raises_on_malformed_json():
     with pytest.raises(ValueError):
-        _extract_json('{"risk_level": ')
+        _extract_json('{"modules": ')
 
 
 # --- AnalysisService -------------------------------------------------------
@@ -190,14 +197,16 @@ async def test_analyze_returns_structured_response(tmp_path):
     response = await service.analyze(r"C:\upload\etc_detect_report.md", _VALID_CONTENT)
 
     assert response.filename == "etc_detect_report.md"
-    assert response.risk_level == "高危"
     assert response.server_info.hostname == "localhost.localdomain"
-    assert len(response.risk_items) == 2
-    assert response.risk_items[0].check_item == "密码有效期"
-    assert response.risk_items[0].passed is False
-    assert response.risk_items[0].recommendation == "将 PASS_MAX_DAYS 设为 90"
-    assert response.risk_items[1].check_item == "密码复杂度"
-    assert response.risk_items[1].passed is True
+    assert len(response.modules) == 1
+    module = response.modules[0]
+    assert module.module == "身份鉴别"
+    assert (module.total, module.passed, module.failed) == (2, 1, 1)
+    assert module.check_items[0].check_item == "密码有效期"
+    assert module.check_items[0].passed is False
+    assert module.check_items[0].recommendation == "将 PASS_MAX_DAYS 设为 90"
+    assert module.check_items[1].check_item == "密码复杂度"
+    assert module.check_items[1].passed is True
     assert response.summary == "存在多项不合规，建议优先整改口令策略。"
 
 
@@ -215,11 +224,10 @@ async def test_analyze_sends_system_prompt_and_report(tmp_path):
     assert messages[-1].content == _VALID_CONTENT
 
 
-async def test_analyze_allows_report_without_risk_items(tmp_path):
+async def test_analyze_allows_report_without_modules(tmp_path):
     payload = {
         "server_info": {"hostname": None, "os": None, "kernel": None},
-        "risk_level": "低危",
-        "risk_items": [],
+        "modules": [],
         "summary": "全部合规。",
     }
     model = FakeModel(content=json.dumps(payload, ensure_ascii=False))
@@ -227,8 +235,7 @@ async def test_analyze_allows_report_without_risk_items(tmp_path):
 
     response = await service.analyze("report.md", _VALID_CONTENT)
 
-    assert response.risk_items == []
-    assert response.risk_level == "低危"
+    assert response.modules == []
 
 
 async def test_analyze_timeout_maps_to_request_timed_out(tmp_path):
@@ -252,17 +259,17 @@ async def test_analyze_upstream_error_maps_to_upstream_failed(tmp_path):
         await service.analyze("report.md", _VALID_CONTENT)
 
 
-# A field-accurate truncation: the first risk item is complete, generation
+# A field-accurate truncation: the first check item is complete, generation
 # cuts mid-string inside the second one.
 _TRUNCATED = (
     '{"server_info": {"hostname": "localhost.localdomain", "os": "Kylin", '
     '"kernel": "4.19.90"}, '
-    '"risk_level": "高危", '
-    '"risk_items": ['
+    '"modules": ['
+    '{"module": "身份鉴别", "total": 2, "passed": 1, "failed": 1, "check_items": ['
     '{"check_item": "密码有效期", "passed": false, "severity": "高危", '
     '"current_status": "99999", "risk_description": "密码不更换", '
     '"recommendation": "PASS_MAX_DAYS=90"}, '
-    '{"check_item": "SELinux", "passed": false, "severity": "严重'
+    '{"check_item": "密码复杂度", "passed": false, "severity": "严重'
 )
 
 
@@ -276,7 +283,7 @@ async def test_analyze_continues_truncated_output_until_complete(tmp_path):
     response = await service.analyze("report.md", _VALID_CONTENT)
 
     assert response.partial is False
-    assert response.risk_level == "高危"
+    assert len(response.modules) == 1
     assert len(model.calls) == 2
     continued_messages = model.calls[1]
     assert continued_messages[-2].content == head
@@ -299,8 +306,11 @@ async def test_analyze_salvages_when_continuations_exhausted(tmp_path):
     # 1 initial call + 3 continuation rounds (the configured cap).
     assert len(model.calls) == 4
     assert response.partial is True
-    assert response.risk_level == "高危"
-    assert [item.check_item for item in response.risk_items] == ["密码有效期"]
+    module = response.modules[0]
+    assert [item.check_item for item in module.check_items] == ["密码有效期"]
+    # Counts truncated alongside the cut item are re-derived from what
+    # actually survived, not kept from the half-written figure.
+    assert (module.total, module.passed, module.failed) == (1, 0, 1)
     assert response.summary is None  # no placeholder text fabricated
 
 
@@ -315,7 +325,7 @@ async def test_analyze_salvages_immediately_when_continuations_disabled(
 
     assert len(model.calls) == 1
     assert response.partial is True
-    assert len(response.risk_items) == 1
+    assert len(response.modules) == 1
 
 
 async def test_analyze_salvages_truncated_json_on_normal_stop(tmp_path):
@@ -327,11 +337,11 @@ async def test_analyze_salvages_truncated_json_on_normal_stop(tmp_path):
     response = await service.analyze("report.md", _VALID_CONTENT)
 
     assert response.partial is True
-    assert response.risk_items[0].check_item == "密码有效期"
+    assert response.modules[0].check_items[0].check_item == "密码有效期"
 
 
 async def test_analyze_unsalvageable_truncation_maps_to_invalid(tmp_path):
-    model = FakeModel(rounds=[('{"risk_lev', "length")])
+    model = FakeModel(rounds=[('{"modul', "length")])
     settings = make_settings(tmp_path, analysis_max_continuations=0)
     service = AnalysisService(model=model, settings=settings)
 
@@ -347,26 +357,29 @@ async def test_analyze_non_json_output_maps_to_invalid_analysis_result(tmp_path)
         await service.analyze("report.md", _VALID_CONTENT)
 
 
-async def test_analyze_repairs_invalid_risk_level_via_salvage(tmp_path):
-    # An out-of-enum risk_level is repaired from item severities and
-    # returned as a partial result instead of failing the request.
-    payload = dict(_VALID_ANALYSIS_JSON)
-    payload["risk_level"] = "extreme"
+async def test_analyze_repairs_module_counts_via_salvage(tmp_path):
+    # A module with unusable counts fails strict validation and is repaired
+    # from its check items as a partial result instead of failing.
+    payload = json.loads(json.dumps(_VALID_ANALYSIS_JSON, ensure_ascii=False))
+    payload["modules"][0]["total"] = "很多"
     model = FakeModel(content=json.dumps(payload, ensure_ascii=False))
     service = make_service(tmp_path, model)
 
     response = await service.analyze("report.md", _VALID_CONTENT)
 
     assert response.partial is True
-    assert response.risk_level == "高危"
+    module = response.modules[0]
+    assert (module.total, module.passed, module.failed) == (2, 1, 1)
 
 
 # --- _salvage_analysis -----------------------------------------------------
 
 
-def test_salvage_derives_risk_level_from_items():
+def test_salvage_rederives_module_counts_from_items():
     truncated = (
-        '{"server_info": {"os": "Kylin V10"}, "risk_items": ['
+        '{"server_info": {"os": "Kylin V10"}, "modules": ['
+        '{"module": "安全审计", "total": 5, "passed": 3, "failed": 2, '
+        '"check_items": ['
         '{"check_item": "密码有效期", "passed": false, "severity": "严重", '
         '"current_status": "99999", "risk_description": "x", '
         '"recommendation": "y"}'
@@ -374,62 +387,50 @@ def test_salvage_derives_risk_level_from_items():
 
     salvaged = _salvage_analysis(truncated)
 
-    assert salvaged.risk_level == "严重"
-    assert len(salvaged.risk_items) == 1
-    assert salvaged.risk_items[0].passed is False
+    module = salvaged.modules[0]
+    assert (module.total, module.passed, module.failed) == (1, 0, 1)
+    assert module.check_items[0].passed is False
     assert salvaged.summary is None
-
-
-def test_salvage_excludes_passed_items_from_risk_level():
-    # A passed critical-severity check must not lift the overall level
-    # above the only failed item's severity.
-    truncated = (
-        '{"risk_items": ['
-        '{"check_item": "SELinux", "passed": true, "severity": "严重", '
-        '"current_status": "enforcing", "risk_description": "x", '
-        '"recommendation": "y"}, '
-        '{"check_item": "密码有效期", "passed": false, "severity": "低危", '
-        '"current_status": "99999", "risk_description": "x", '
-        '"recommendation": "y"}'
-    )
-
-    salvaged = _salvage_analysis(truncated)
-
-    assert salvaged.risk_level == "低危"
-    assert [item.passed for item in salvaged.risk_items] == [True, False]
 
 
 def test_salvage_backfills_missing_passed_as_false():
     # Truncation can cut an item before its "passed" flag was generated;
-    # the unknown outcome defaults to not passed so the risk level is
-    # not silently lowered.
+    # the unknown outcome defaults to not passed so the item does not
+    # silently look compliant.
     truncated = (
-        '{"risk_items": [{"check_item": "密码有效期", "severity": "高危", '
+        '{"modules": [{"module": "身份鉴别", "check_items": ['
+        '{"check_item": "密码有效期", "severity": "高危", '
         '"current_status": "99999", "risk_description": "x", '
         '"recommendation": "y"}'
     )
 
     salvaged = _salvage_analysis(truncated)
 
-    assert salvaged.risk_items[0].passed is False
-    assert salvaged.risk_level == "高危"
+    assert salvaged.modules[0].check_items[0].passed is False
 
 
-def test_salvage_maps_info_only_items_to_low_level():
+def test_salvage_names_unnamed_module_with_items():
+    # A module whose name was cut off keeps its items under a fallback
+    # name; a nameless, itemless fragment is dropped entirely.
     truncated = (
-        '{"risk_items": [{"check_item": "系统类型", "severity": "提示", '
-        '"current_status": "rhel", "risk_description": "x", '
+        '{"modules": [{"check_items": ['
+        '{"check_item": "a", "passed": true, "severity": "提示", '
+        '"current_status": "s", "risk_description": "x", '
         '"recommendation": "y"}'
     )
 
-    assert _salvage_analysis(truncated).risk_level == "低危"
+    salvaged = _salvage_analysis(truncated)
+
+    assert salvaged.modules[0].module == "未命名模块"
+    assert salvaged.modules[0].total == 1
 
 
 def test_salvage_skips_brace_inside_string_value():
     # The last "}" before the cut sits inside a recommendation string; the
     # repair must fall back to the previous real closing brace.
     truncated = (
-        '{"server_info": {"os": "x"}, "risk_items": ['
+        '{"server_info": {"os": "x"}, "modules": ['
+        '{"module": "身份鉴别", "check_items": ['
         '{"check_item": "a", "severity": "低危", "current_status": "s", '
         '"risk_description": "d", "recommendation": "run } cmd'
     )
@@ -437,13 +438,12 @@ def test_salvage_skips_brace_inside_string_value():
     salvaged = _salvage_analysis(truncated)
 
     assert salvaged.server_info.os == "x"
-    assert salvaged.risk_items == []
-    assert salvaged.risk_level == "低危"
+    assert salvaged.modules == []
 
 
 def test_salvage_raises_without_complete_fragment():
     with pytest.raises(ValueError):
-        _salvage_analysis('{"risk_level": "hi')
+        _salvage_analysis('{"modules": "hi')
 
 
 def test_analysis_rejects_unknown_fields():
@@ -454,19 +454,19 @@ def test_analysis_rejects_unknown_fields():
         SecurityAnalysis.model_validate(payload)
 
 
-def test_analysis_rejects_invalid_risk_level():
-    payload = dict(_VALID_ANALYSIS_JSON)
-    payload["risk_level"] = "extreme"
+def test_analysis_rejects_module_without_name():
+    payload = json.loads(json.dumps(_VALID_ANALYSIS_JSON, ensure_ascii=False))
+    del payload["modules"][0]["module"]
 
     with pytest.raises(ValidationError):
         SecurityAnalysis.model_validate(payload)
 
 
-def test_analysis_rejects_risk_item_without_passed():
-    payload = dict(_VALID_ANALYSIS_JSON)
-    payload["risk_items"] = [
+def test_analysis_rejects_check_item_without_passed():
+    payload = json.loads(json.dumps(_VALID_ANALYSIS_JSON, ensure_ascii=False))
+    payload["modules"][0]["check_items"] = [
         {key: value for key, value in item.items() if key != "passed"}
-        for item in _VALID_ANALYSIS_JSON["risk_items"]
+        for item in payload["modules"][0]["check_items"]
     ]
 
     with pytest.raises(ValidationError):
