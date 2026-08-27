@@ -134,3 +134,27 @@ class InvalidPentestFile(ChatServiceError):
         "上传的文件不是可解析的渗透测试记录单 PDF：需 .pdf 扩展名、"
         "有效的 PDF 文件头且文档未加密损坏，请检查后重新上传。"
     )
+
+
+class InvalidRiskFile(ChatServiceError):
+    code = "INVALID_RISK_FILE"
+    http_status = 422
+    public_message = (
+        "上传的文件不是可解析的风险评估报告：需 .doc/.docx 扩展名"
+        "且文件头有效，请检查后重新上传。"
+    )
+
+
+class RiskDocConversionFailed(ChatServiceError):
+    code = "RISK_DOC_CONVERSION_FAILED"
+    http_status = 502
+    public_message = (
+        "服务器 .doc 转换失败（LibreOffice 不可用或文件损坏），"
+        "请改传 .docx 格式的报告后重试。"
+    )
+
+
+class InvalidRiskAssessmentResult(ChatServiceError):
+    code = "INVALID_RISK_ASSESSMENT_RESULT"
+    http_status = 502
+    public_message = "风险等级统计提取结果未通过校验，请重试或更换清晰的报告文件。"

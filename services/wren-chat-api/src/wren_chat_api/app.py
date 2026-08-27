@@ -24,6 +24,7 @@ from wren_chat_api.contracts import (
     ErrorBody,
     ErrorResponse,
     PentestExtractResponse,
+    RiskAssessmentExtractResponse,
     RiskSelfCheckRequest,
     RiskSelfCheckResponse,
     SecurityAnalysisResponse,
@@ -47,6 +48,10 @@ from wren_chat_api.pentest_extract import (
     validate_pentest_upload,
 )
 from wren_chat_api.recovery import run_recovery_loop
+from wren_chat_api.risk_assessment import (
+    RiskAssessmentService,
+    validate_risk_upload,
+)
 from wren_chat_api.risk_selfcheck import RiskSelfCheckService
 from wren_chat_api.security_analysis import AnalysisService, validate_report
 
@@ -60,6 +65,10 @@ _ANALYSIS_INVALID_REQUEST_MESSAGE = (
 )
 _PENTEST_INVALID_REQUEST_MESSAGE = (
     "请求参数不合法，请以 multipart/form-data 上传名为 file 的 .pdf 渗透测试记录单。"
+)
+_RISK_ASSESSMENT_INVALID_REQUEST_MESSAGE = (
+    "请求参数不合法，请以 multipart/form-data 上传名为 file 的 "
+    ".doc/.docx 风险评估报告。"
 )
 _RISK_SELFCHECK_INVALID_REQUEST_MESSAGE = (
     "请求参数不合法：list 需为 1-50 项，每项含 id、component、version 及 "
@@ -75,6 +84,7 @@ class AppOverrides(TypedDict, total=False):
     analysis_service: Any
     pentest_service: Any
     risk_selfcheck_service: Any
+    risk_assessment_service: Any
     readiness: Callable[[], Awaitable[None]]
 
 
@@ -94,6 +104,7 @@ def create_app(
             or "analysis_service" in overrides
             or "pentest_service" in overrides
             or "risk_selfcheck_service" in overrides
+            or "risk_assessment_service" in overrides
         )
         else _production_lifespan(resolved_settings)
     )
@@ -103,6 +114,7 @@ def create_app(
     app.state.analysis_service = overrides.get("analysis_service")
     app.state.pentest_service = overrides.get("pentest_service")
     app.state.risk_selfcheck_service = overrides.get("risk_selfcheck_service")
+    app.state.risk_assessment_service = overrides.get("risk_assessment_service")
     app.state.readiness = overrides.get("readiness") or _default_readiness
 
     def get_chat_service(request: Request) -> Any:
@@ -127,6 +139,12 @@ def create_app(
         service = request.app.state.risk_selfcheck_service
         if service is None:
             raise RuntimeError("risk self-check service not initialized")
+        return service
+
+    def get_risk_assessment_service(request: Request) -> Any:
+        service = request.app.state.risk_assessment_service
+        if service is None:
+            raise RuntimeError("risk assessment service not initialized")
         return service
 
     @app.post(
@@ -211,6 +229,31 @@ def create_app(
         return response
 
     @app.post(
+        "/v1/risk-assessment/extract",
+        response_model=RiskAssessmentExtractResponse,
+        dependencies=[Depends(auth)],
+    )
+    async def extract_risk_assessment(
+        file: UploadFile = File(...),
+        service: Any = Depends(get_risk_assessment_service),
+    ) -> RiskAssessmentExtractResponse:
+        route = "/v1/risk-assessment/extract"
+        with REQUEST_LATENCY.labels(route=route).time():
+            try:
+                raw = await file.read()
+                validate_risk_upload(file.filename, raw)
+                response = await service.extract(file.filename, raw)
+            except ChatServiceError as exc:
+                REQUESTS.labels(route=route, status=str(exc.http_status)).inc()
+                raise
+            except Exception as exc:
+                logger.error("unhandled risk assessment error", exc_info=True)
+                REQUESTS.labels(route=route, status="500").inc()
+                raise InternalError(cause=exc) from exc
+        REQUESTS.labels(route=route, status="200").inc()
+        return response
+
+    @app.post(
         "/v1/risk/self-check",
         response_model=RiskSelfCheckResponse,
         dependencies=[Depends(auth)],
@@ -279,6 +322,7 @@ def create_app(
             "/v1/chat": _INVALID_REQUEST_MESSAGE,
             "/v1/security-report/analysis": _ANALYSIS_INVALID_REQUEST_MESSAGE,
             "/v1/pentest-report/extract": _PENTEST_INVALID_REQUEST_MESSAGE,
+            "/v1/risk-assessment/extract": _RISK_ASSESSMENT_INVALID_REQUEST_MESSAGE,
             "/v1/risk/self-check": _RISK_SELFCHECK_INVALID_REQUEST_MESSAGE,
         }
         return JSONResponse(
@@ -392,6 +436,10 @@ def _production_lifespan(settings: Settings) -> Callable[[FastAPI], Any]:
         # Needs neither the database nor the chat graph: constructed from
         # settings alone (model credentials resolved inside).
         app.state.pentest_service = PentestExtractService(settings=settings)
+        app.state.risk_assessment_service = RiskAssessmentService(
+            model=model,
+            settings=settings,
+        )
 
         async def readiness() -> None:
             async with app_pool.connection() as conn:

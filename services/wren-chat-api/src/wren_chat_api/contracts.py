@@ -240,3 +240,22 @@ class PentestExtractResponse(StrictModel):
 
     filename: Filename
     risk_items: list[PentestRiskItem] = Field(default_factory=list)
+
+
+class RiskAssessmentExtractResponse(StrictModel):
+    """Public success response of the risk-assessment extraction endpoint.
+
+    Field names follow the caller's ledger contract verbatim (camelCase).
+    Counts come from the 高/中/低 rows of the 风险等级统计 table (很高/很低
+    rows are out of caliber), rates from the same rows' percentage column,
+    and the final evaluation from the report's concluding sentence."""
+
+    filename: Filename
+    riskHigh: int = Field(ge=0)
+    riskHighRate: float = Field(ge=0, le=1)
+    riskMedium: int = Field(ge=0)
+    riskMediumRate: float = Field(ge=0, le=1)
+    riskLow: int = Field(ge=0)
+    riskLowRate: float = Field(ge=0, le=1)
+    finalEvaluationCode: Literal["H", "M", "L"]
+    finalEvaluationName: Literal["高风险", "中风险", "低风险"]

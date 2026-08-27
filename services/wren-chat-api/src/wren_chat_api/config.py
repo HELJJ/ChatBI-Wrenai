@@ -98,6 +98,17 @@ class Settings(BaseSettings):
     pentest_page_concurrency: int = Field(default=4, ge=1, le=16)
     pentest_doc_concurrency: int = Field(default=2, ge=1, le=8)
 
+    # --- Risk-assessment report extraction (风险等级统计 pipeline) ---
+    # One LLM pass over the serialized section; the output is eight tiny
+    # fields, so the ceiling only needs headroom over that.
+    risk_assessment_timeout_seconds: int = Field(default=120, ge=1, le=600)
+    risk_assessment_max_tokens: int = Field(default=512, ge=64, le=4_096)
+    # Legacy .doc front-end: headless LibreOffice, one conversion at a time.
+    risk_assessment_soffice_bin: str = Field(default="soffice", min_length=1)
+    risk_assessment_convert_timeout_seconds: int = Field(
+        default=60, ge=1, le=300
+    )
+
     @field_validator("state_database_url")
     @classmethod
     def validate_state_database_url(cls, value: SecretStr) -> SecretStr:
