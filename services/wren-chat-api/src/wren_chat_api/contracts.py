@@ -242,8 +242,8 @@ class PentestExtractResponse(StrictModel):
     risk_items: list[PentestRiskItem] = Field(default_factory=list)
 
 
-class RiskAssessmentExtractResponse(StrictModel):
-    """Public success response of the risk-assessment extraction endpoint.
+class RiskAssessmentStats(StrictModel):
+    """Extracted 风险等级统计 payload of one report.
 
     Field names follow the caller's ledger contract verbatim (camelCase).
     Counts come from the 高/中/低 rows of the 风险等级统计 table (很高/很低
@@ -259,3 +259,28 @@ class RiskAssessmentExtractResponse(StrictModel):
     riskLowRate: float = Field(ge=0, le=1)
     finalEvaluationCode: Literal["H", "M", "L"]
     finalEvaluationName: Literal["高风险", "中风险", "低风险"]
+
+
+class RiskAssessmentExtractResponse(StrictModel):
+    """Public success envelope of the risk-assessment extraction endpoint.
+
+    Carries the caller-required business status (200 mirrors the HTTP
+    status on success); business failures use the endpoint's HTTP-200
+    RiskAssessmentFailure envelope instead."""
+
+    code: Literal[200] = 200
+    message: str = "success"
+    data: RiskAssessmentStats
+
+
+class RiskAssessmentFailure(StrictModel):
+    """HTTP-200 failure envelope of the risk-assessment extraction endpoint.
+
+    Business failures answer with HTTP 200 per the caller's gateway
+    convention; ``code`` mirrors the typed error's status so clients and
+    the REQUESTS metric keep full granularity, ``data`` is always null,
+    and ``message`` is the error's public human-readable message."""
+
+    code: int = Field(ge=400)
+    message: str = Field(min_length=1)
+    data: None = None

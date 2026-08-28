@@ -157,4 +157,23 @@ class RiskDocConversionFailed(ChatServiceError):
 class InvalidRiskAssessmentResult(ChatServiceError):
     code = "INVALID_RISK_ASSESSMENT_RESULT"
     http_status = 502
-    public_message = "风险等级统计提取结果未通过校验，请重试或更换清晰的报告文件。"
+    public_message = (
+        "模型提取的数值与报告原文核对不一致（防幻觉拦截），"
+        "请重试或更换更清晰的报告文件。"
+    )
+
+
+class RiskAssessmentDataNotFound(ChatServiceError):
+    code = "RISK_ASSESSMENT_DATA_NOT_FOUND"
+    http_status = 422
+    public_message = (
+        "未在报告中找到完整的风险等级统计数据，请确认报告包含"
+        "「风险等级统计」章节、统计数据为文本表格（非图片），"
+        "且最终评价为高/中/低风险。"
+    )
+
+
+class RiskAssessmentOutputMalformed(ChatServiceError):
+    code = "RISK_ASSESSMENT_OUTPUT_MALFORMED"
+    http_status = 502
+    public_message = "模型未返回格式有效的提取结果，请重试。"

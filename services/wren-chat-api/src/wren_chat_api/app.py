@@ -25,6 +25,7 @@ from wren_chat_api.contracts import (
     ErrorResponse,
     PentestExtractResponse,
     RiskAssessmentExtractResponse,
+    RiskAssessmentFailure,
     RiskSelfCheckRequest,
     RiskSelfCheckResponse,
     SecurityAnalysisResponse,
@@ -242,14 +243,38 @@ def create_app(
             try:
                 raw = await file.read()
                 validate_risk_upload(file.filename, raw)
-                response = await service.extract(file.filename, raw)
+                response = RiskAssessmentExtractResponse(
+                    data=await service.extract(file.filename, raw)
+                )
             except ChatServiceError as exc:
+                # Business failures answer HTTP 200 with the endpoint's
+                # business-code envelope (gateway convention); the metric
+                # still records the business code so failure rates stay
+                # visible. Transport-level failures (auth dependency,
+                # malformed multipart) keep their real HTTP statuses.
+                logger.warning(
+                    "risk assessment extraction failed (%s): %s",
+                    exc.code,
+                    exc.internal_message,
+                )
                 REQUESTS.labels(route=route, status=str(exc.http_status)).inc()
-                raise
+                return JSONResponse(
+                    status_code=200,
+                    content=RiskAssessmentFailure(
+                        code=exc.http_status,
+                        message=exc.public_message,
+                    ).model_dump(),
+                )
             except Exception as exc:
                 logger.error("unhandled risk assessment error", exc_info=True)
                 REQUESTS.labels(route=route, status="500").inc()
-                raise InternalError(cause=exc) from exc
+                return JSONResponse(
+                    status_code=200,
+                    content=RiskAssessmentFailure(
+                        code=InternalError.http_status,
+                        message=InternalError.public_message,
+                    ).model_dump(),
+                )
         REQUESTS.labels(route=route, status="200").inc()
         return response
 

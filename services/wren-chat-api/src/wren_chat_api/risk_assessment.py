@@ -48,11 +48,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from openai import APIError as OpenAIAPIError
 
 from wren_chat_api.config import Settings
-from wren_chat_api.contracts import RiskAssessmentExtractResponse
+from wren_chat_api.contracts import RiskAssessmentStats
 from wren_chat_api.errors import (
     InvalidRiskAssessmentResult,
     InvalidRiskFile,
     RequestTimedOut,
+    RiskAssessmentDataNotFound,
+    RiskAssessmentOutputMalformed,
     RiskDocConversionFailed,
     UpstreamFailed,
 )
@@ -376,17 +378,22 @@ _COUNT_RATE_PAIRS = (
 def validate_extraction(payload: dict[str, Any], section_text: str) -> dict[str, Any]:
     """Validate the eight fields against the section text channel.
 
-    Returns the validated mapping on success; raises InvalidRiskAssessmentResult
-    with every problem listed. Semantic pointing (which table row is 高) stays
-    with the model; this layer only enforces existence, domains, and
-    cross-source agreement, so template drift never turns rules into a new
-    failure mode.
+    Returns the validated mapping on success. Failures fall into three
+    typed errors matching the three real-world scenarios: data the report
+    simply does not contain (RiskAssessmentDataNotFound), malformed model
+    output (RiskAssessmentOutputMalformed), and values that cannot be
+    traced back to the text (InvalidRiskAssessmentResult). Semantic
+    pointing (which table row is 高) stays with the model; this layer only
+    enforces existence, domains, and cross-source agreement, so template
+    drift never turns rules into a new failure mode.
 
     Count containment alone is too weak: single-digit counts collide with
     the table's 风险等级 column (5/4/3/2/1). When the section has any table,
     each (count, percent) pair must co-occur in one table row instead.
     """
-    errors: list[str] = []
+    missing: list[str] = []
+    malformed: list[str] = []
+    mismatch: list[str] = []
     compact = re.sub(r"\s+", "", section_text).replace("％", "%")
     stats: dict[str, Any] = {}
 
@@ -397,7 +404,7 @@ def validate_extraction(payload: dict[str, Any], section_text: str) -> dict[str,
         "finalEvaluationName",
     ):
         if payload.get(key) is None:
-            errors.append(f"缺少字段 {key}（模型未在原文中找到）")
+            missing.append(f"缺少字段 {key}（模型未在原文中找到）")
 
     table_rows = [
         [cell.strip() for cell in line.strip().strip("|").split("|")]
@@ -405,18 +412,18 @@ def validate_extraction(payload: dict[str, Any], section_text: str) -> dict[str,
         if line.strip().startswith("|")
     ]
 
-    if not errors:
+    if not missing:
         for count_key, rate_key in _COUNT_RATE_PAIRS:
             count, rate = payload[count_key], payload[rate_key]
             if not isinstance(count, int) or isinstance(count, bool) or count < 0:
-                errors.append(f"{count_key} 不是非负整数")
+                malformed.append(f"{count_key} 不是非负整数")
                 continue
             if (
                 not isinstance(rate, (int, float))
                 or isinstance(rate, bool)
                 or not 0 <= rate <= 1
             ):
-                errors.append(f"{rate_key} 不在 [0,1] 内")
+                malformed.append(f"{rate_key} 不在 [0,1] 内")
                 continue
             percent = f"{round(rate * 100):g}"
             if table_rows:
@@ -425,13 +432,13 @@ def validate_extraction(payload: dict[str, Any], section_text: str) -> dict[str,
                     and any(cell in (f"{percent}%", f"{percent}.0%") for cell in row)
                     for row in table_rows
                 ):
-                    errors.append(
+                    mismatch.append(
                         f"{count_key}={count} 与 {rate_key}={rate} "
                         f"未同现于统计表同一行(疑似幻觉)"
                     )
                     continue
             elif str(count) not in compact or f"{percent}%" not in compact:
-                errors.append(
+                mismatch.append(
                     f"{count_key}={count} 或其百分比形式 {percent}% "
                     f"未出现在文本通道(疑似幻觉)"
                 )
@@ -439,31 +446,38 @@ def validate_extraction(payload: dict[str, Any], section_text: str) -> dict[str,
             stats[count_key] = count
             stats[rate_key] = float(rate)
 
-    if not errors:
+    if not (missing or malformed or mismatch):
         code = payload["finalEvaluationCode"]
         name = payload["finalEvaluationName"]
         if code not in _CODE_TO_NAME:
-            errors.append(f"finalEvaluationCode 非枚举值: {code!r}")
+            malformed.append(f"finalEvaluationCode 非枚举值: {code!r}")
         elif name != _CODE_TO_NAME[code]:
-            errors.append(f"finalEvaluationCode({code}) 与 name({name}) 不对应")
+            mismatch.append(f"finalEvaluationCode({code}) 与 name({name}) 不对应")
         elif name not in compact:
-            errors.append(f"finalEvaluationName={name} 未出现在文本通道(疑似幻觉)")
+            mismatch.append(f"finalEvaluationName={name} 未出现在文本通道(疑似幻觉)")
         else:
             stats["finalEvaluationCode"] = code
             stats["finalEvaluationName"] = name
 
-    if not errors:
+    if not (missing or malformed or mismatch):
         prose = _PROSE_COUNTS_RE.search(compact)
         if prose:
             prose_counts = tuple(int(g) for g in prose.groups())
             model_counts = tuple(stats[key] for key in _COUNT_FIELDS)
             if prose_counts != model_counts:
-                errors.append(
+                mismatch.append(
                     f"与总述句不一致: 原文 {prose_counts} vs 提取 {model_counts}"
                 )
 
-    if errors:
-        raise InvalidRiskAssessmentResult("; ".join(errors))
+    # Priority: missing data is a fact about the input document (retry
+    # cannot fix it); a malformed output is a more fundamental failure than
+    # a value mismatch and wins when both occur in one response.
+    if missing:
+        raise RiskAssessmentDataNotFound("; ".join(missing))
+    if malformed:
+        raise RiskAssessmentOutputMalformed("; ".join(malformed))
+    if mismatch:
+        raise InvalidRiskAssessmentResult("; ".join(mismatch))
     return stats
 
 
@@ -518,7 +532,7 @@ class RiskAssessmentService:
         # per-run profiles, serializing keeps CPU spikes bounded.
         self._convert_lock = asyncio.Lock()
 
-    async def extract(self, filename: str, raw: bytes) -> RiskAssessmentExtractResponse:
+    async def extract(self, filename: str, raw: bytes) -> RiskAssessmentStats:
         started = time.monotonic()
         if raw.lstrip()[:8].startswith(_OLE_MAGIC):
             async with self._convert_lock:
@@ -567,7 +581,7 @@ class RiskAssessmentService:
             stats,
             time.monotonic() - started,
         )
-        return RiskAssessmentExtractResponse(
+        return RiskAssessmentStats(
             filename=display_filename(filename),
             **stats,
         )
@@ -589,4 +603,4 @@ class RiskAssessmentService:
         try:
             return parse_extraction(str(response.content))
         except ValueError as exc:
-            raise InvalidRiskAssessmentResult(cause=exc) from exc
+            raise RiskAssessmentOutputMalformed(cause=exc) from exc

@@ -12,6 +12,8 @@ from wren_chat_api.config import Settings
 from wren_chat_api.errors import (
     InvalidRiskAssessmentResult,
     InvalidRiskFile,
+    RiskAssessmentDataNotFound,
+    RiskAssessmentOutputMalformed,
     RiskDocConversionFailed,
 )
 from wren_chat_api.risk_assessment import (
@@ -295,9 +297,23 @@ def test_validation_rejects_code_name_mismatch():
 
 def test_validation_rejects_missing_field_as_null():
     payload = EXPECTED_PAYLOAD | {"riskLow": None}
-    with pytest.raises(InvalidRiskAssessmentResult) as excinfo:
+    with pytest.raises(RiskAssessmentDataNotFound) as excinfo:
         validate_extraction(payload, serialize_report())
     assert "缺少字段 riskLow" in excinfo.value.internal_message
+
+
+def test_validation_rejects_non_integer_count_as_malformed():
+    payload = EXPECTED_PAYLOAD | {"riskHigh": "3"}
+    with pytest.raises(RiskAssessmentOutputMalformed) as excinfo:
+        validate_extraction(payload, serialize_report())
+    assert "不是非负整数" in excinfo.value.internal_message
+
+
+def test_validation_rejects_invalid_enum_as_malformed():
+    payload = EXPECTED_PAYLOAD | {"finalEvaluationCode": "X"}
+    with pytest.raises(RiskAssessmentOutputMalformed) as excinfo:
+        validate_extraction(payload, serialize_report())
+    assert "非枚举值" in excinfo.value.internal_message
 
 
 # --------------------------------------------------------- doc conversion
@@ -375,7 +391,7 @@ async def test_service_converts_doc_before_extracting(tmp_path, monkeypatch):
 
 async def test_service_raises_typed_error_on_model_garbage(tmp_path):
     service, _ = make_service(tmp_path, "not json at all")
-    with pytest.raises(InvalidRiskAssessmentResult):
+    with pytest.raises(RiskAssessmentOutputMalformed):
         await service.extract("报告.docx", build_docx(report_body()))
 
 
