@@ -236,10 +236,17 @@ class PentestExtractResponse(StrictModel):
 
     Validation diagnostics (anti-hallucination hits, count mismatches,
     page failures) are intentionally not part of the public contract;
-    they are logged server-side for the manual-review queue."""
+    they are logged server-side for the manual-review queue.
+
+    ``detail`` is the additive docling channel: rule-based structured
+    extraction (测试基本信息 / 安全风险项 with 测试内容·风险分析·加固建议
+    / 测试通过项 / 测试不适用项; keys in the report's own Chinese field
+    names). None — omitted from the wire — when the channel is disabled
+    or degraded; it never affects the primary fields."""
 
     filename: Filename
     risk_items: list[PentestRiskItem] = Field(default_factory=list)
+    detail: dict[str, JsonValue] | None = None
 
 
 class RiskAssessmentStats(StrictModel):
@@ -284,3 +291,45 @@ class RiskAssessmentFailure(StrictModel):
     code: int = Field(ge=400)
     message: str = Field(min_length=1)
     data: None = None
+
+
+class ReportTaskAcceptedData(StrictModel):
+    """Accepted-async payload: the caller polls with this task id."""
+
+    taskId: str = Field(min_length=1)
+    status: Literal["processing"] = "processing"
+
+
+class RiskAssessmentAcceptResponse(StrictModel):
+    """Async-accept envelope of the dengbao PDF branch (gateway shape).
+
+    Same envelope family as RiskAssessmentExtractResponse: code 200 means
+    the upload was accepted; the extraction result arrives via
+    GET /v1/report-tasks/{taskId} once it finishes."""
+
+    code: Literal[200] = 200
+    message: str = "success"
+    data: ReportTaskAcceptedData
+
+
+class ReportTaskResult(StrictModel):
+    """Terminal result of a succeeded report task."""
+
+    reportType: Literal["dengbao"]
+    detail: dict[str, JsonValue]
+
+
+class ReportTaskView(StrictModel):
+    """Public view of one report task (GET /v1/report-tasks/{taskId}).
+
+    ``status`` collapses pending/running into "processing"; ``result`` is
+    present only on success and ``error`` only on failure."""
+
+    taskId: str
+    filename: str
+    reportType: Literal["dengbao"]
+    status: Literal["processing", "succeeded", "failed"]
+    createdAt: str
+    completedAt: str | None = None
+    result: ReportTaskResult | None = None
+    error: ErrorBody | None = None

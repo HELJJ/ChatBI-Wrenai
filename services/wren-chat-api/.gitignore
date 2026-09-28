@@ -1,0 +1,7 @@
+# runtime state and logs
+logs/
+*.log
+nohup.out
+*.pid
+__pycache__/
+.env

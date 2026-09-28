@@ -8,7 +8,13 @@ values.
 from __future__ import annotations
 
 from fastapi import Response
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
 
 REQUESTS = Counter(
     "wren_chat_requests_total",
@@ -48,6 +54,29 @@ ANALYSIS_TRUNCATIONS = Counter(
     "Security analyses that hit the model token limit, by handling outcome.",
     ["outcome"],
 )
+REPORT_TASKS = Counter(
+    "wren_chat_report_tasks_total",
+    "Dengbao report tasks by terminal outcome (worker runs, not uploads; "
+    "cache hits are invisible here by design).",
+    ["outcome"],
+)
+REPORT_TASK_PENDING = Gauge(
+    "wren_chat_report_tasks_pending",
+    "Dengbao report tasks waiting in the worker queue.",
+)
+PENTEST_DOCLING = Counter(
+    "wren_chat_pentest_docling_total",
+    "Pentest docling detail-channel runs by outcome (degraded means the "
+    "primary three fields were still served).",
+    ["outcome"],
+)
+
+# Pre-initialize every label series so the exposition shows zeros before
+# the first event (absent samples are indistinguishable from "never ran").
+for _outcome in ("succeeded", "failed"):
+    REPORT_TASKS.labels(outcome=_outcome).inc(0)
+for _outcome in ("ok", "degraded"):
+    PENTEST_DOCLING.labels(outcome=_outcome).inc(0)
 
 
 def metrics_response() -> Response:

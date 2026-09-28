@@ -98,6 +98,20 @@ class Settings(BaseSettings):
     pentest_page_concurrency: int = Field(default=4, ge=1, le=16)
     pentest_doc_concurrency: int = Field(default=2, ge=1, le=8)
 
+    # --- Pentest second extraction channel (docling + rule-based repair) ---
+    # Runs after the VLM pipeline: the upload goes to the local docling
+    # parsing service (preset=pentest_fix), then report_postproc repairs
+    # cross-page tables and extracts the structured detail. The channel is
+    # additive and fail-open — any failure degrades to detail=null and the
+    # primary three fields are never affected.
+    docling_service_url: str = Field(
+        default="http://127.0.0.1:5001", min_length=1
+    )
+    pentest_docling_enabled: bool = False
+    # Service-side conversion dominates (~20s for a 17-page record); the
+    # post-processing itself is ~1s.
+    pentest_docling_timeout_seconds: int = Field(default=300, ge=1, le=1800)
+
     # --- Risk-assessment report extraction (风险等级统计 pipeline) ---
     # One LLM pass over the serialized section; the output is eight tiny
     # fields, so the ceiling only needs headroom over that.
@@ -108,6 +122,18 @@ class Settings(BaseSettings):
     risk_assessment_convert_timeout_seconds: int = Field(
         default=60, ge=1, le=300
     )
+
+    # --- Dengbao PDF branch (async report tasks) ---
+    # When enabled, POST /v1/risk-assessment/extract accepts 等保测评 PDFs:
+    # a task is created (sha256-deduplicated) and answered with a taskId;
+    # the background worker runs docling conversion + the dengbao pipeline
+    # and the caller polls GET /v1/report-tasks/{taskId}. The .doc/.docx
+    # risk-assessment path is unaffected by this switch.
+    risk_dengbao_enabled: bool = False
+    # A 522-page report converts in ~14 minutes on CPU; the ceiling covers
+    # larger documents plus queueing behind the service's single slot.
+    dengbao_docling_timeout_seconds: int = Field(default=1800, ge=1, le=3600)
+    report_task_poll_seconds: float = Field(default=5, ge=1, le=60)
 
     @field_validator("state_database_url")
     @classmethod

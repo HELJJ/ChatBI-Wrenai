@@ -1,0 +1,22 @@
+# systemd 单元示例：/etc/systemd/system/wren-chat-api.service
+# 安装: cp wren-chat-api.service /etc/systemd/system/ && systemctl daemon-reload
+# 启动: systemctl enable --now wren-chat-api
+# 注意: 先以同级方式安装 docling-service（见 /mnt/sdb/workspace/docling_service/docling-service.service）
+[Unit]
+Description=Wren Chat API (chat + report extraction)
+After=network.target postgresql.service docling-service.service
+Wants=docling-service.service
+
+[Service]
+Type=simple
+WorkingDirectory=/mnt/sdb/workspace/ChatBI-Wrenai/services/wren-chat-api
+EnvironmentFile=/mnt/sdb/workspace/ChatBI-Wrenai/services/wren-chat-api/.env
+Environment=WREN_CHAT_PENTEST_DOCLING_ENABLED=true
+Environment=WREN_CHAT_RISK_DENGBAO_ENABLED=true
+ExecStart=/root/micromamba/envs/wrenai/bin/python -m uvicorn wren_chat_api.main:app --host 127.0.0.1 --port 8300
+Restart=on-failure
+RestartSec=10
+MemoryMax=8G
+
+[Install]
+WantedBy=multi-user.target

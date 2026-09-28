@@ -177,3 +177,9 @@ class RiskAssessmentOutputMalformed(ChatServiceError):
     code = "RISK_ASSESSMENT_OUTPUT_MALFORMED"
     http_status = 502
     public_message = "模型未返回格式有效的提取结果，请重试。"
+
+
+class ReportTaskNotFound(ChatServiceError):
+    code = "REPORT_TASK_NOT_FOUND"
+    http_status = 404
+    public_message = "报告任务不存在，请确认任务 ID 后重试。"
