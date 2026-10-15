@@ -86,7 +86,7 @@ jobs:
           manylinux: auto
           working-directory: core/wren-core-py
       - name: Upload wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheel-${{ matrix.target }}
           path: core/wren-core-py/dist/*.whl
@@ -142,7 +142,7 @@ jobs:
           args: --out dist
           working-directory: core/wren-core-py
       - name: Upload sdist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: core/wren-core-py/dist/*.tar.gz
